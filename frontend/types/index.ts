@@ -246,6 +246,14 @@ export interface Stream {
   created_at?: string;
   updated_at?: string;
   pending_events?: number;
+  last_prediction?: {
+    violence_score: number;
+    non_violence_score: number;
+    is_violent: boolean;
+    timestamp: string;
+    stream_id?: string;
+    stream_name?: string;
+  };
 }
 
 export interface StreamCreateRequest {
@@ -389,7 +397,7 @@ export interface InferenceScoreMessage {
   violence_score: number;
   non_violence_score: number;
   is_violent: boolean;
-  timestamp: string;
+  timestamp: string; // Required!
   fps?: number;
 }
 

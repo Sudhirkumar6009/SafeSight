@@ -50,9 +50,9 @@ logger.add(sys.stderr, level="INFO", format="<green>{time:HH:mm:ss}</green> | <l
 MODEL_PATH = Path(__file__).parent / ".." / "ml-service" / "models" / "violence_model_legacy.h5"
 EXPECTED_FRAMES = 16
 TARGET_SIZE = (224, 224)
-INFERENCE_INTERVAL = 0.5  # Run inference every 0.5 seconds
+INFERENCE_INTERVAL = float(os.getenv("INFERENCE_INTERVAL", "0.3"))  # Run inference every 0.3 seconds (faster detection)
 VIOLENCE_THRESHOLD = float(os.getenv("VIOLENCE_THRESHOLD", "0.50"))  # 50% for is_violent flag
-VIOLENCE_ALERT_THRESHOLD = float(os.getenv("VIOLENCE_ALERT_THRESHOLD", "0.90"))  # Alert at 90%+ (instant notification)
+VIOLENCE_ALERT_THRESHOLD = float(os.getenv("VIOLENCE_ALERT_THRESHOLD", "0.80"))  # Alert at 90%+ (instant notification)
 VIOLENCE_ALERT_COOLDOWN = float(os.getenv("VIOLENCE_ALERT_COOLDOWN", "5.0"))  # 5 second cooldown between alerts
 
 # Model prediction smoothing (reduce false positives)
@@ -60,14 +60,41 @@ PREDICTION_SMOOTHING_WINDOW = int(os.getenv("PREDICTION_SMOOTHING_WINDOW", "3"))
 CONSECUTIVE_DETECTIONS_REQUIRED = int(os.getenv("CONSECUTIVE_DETECTIONS_REQUIRED", "2"))  # N consecutive high scores to trigger alert
 
 # Clip recording settings
-CLIP_BUFFER_SECONDS = int(os.getenv("CLIP_BUFFER_SECONDS", "10"))  # 10s before violence
-CLIP_AFTER_SECONDS = int(os.getenv("CLIP_AFTER_SECONDS", "10"))  # 10s after violence ends
+CLIP_BUFFER_SECONDS = int(os.getenv("CLIP_BUFFER_SECONDS", "5"))  # 10s before violence
+CLIP_AFTER_SECONDS = int(os.getenv("CLIP_AFTER_SECONDS", "5"))  # 10s after violence ends
 CLIP_MAX_DURATION = int(os.getenv("CLIP_MAX_DURATION", "60"))  # Max 60s violence duration before force-save
 CLIPS_DIR = Path(os.getenv("CLIPS_DIR", "./clips"))
 CLIPS_DIR.mkdir(exist_ok=True)
 THUMBNAILS_DIR = CLIPS_DIR / "thumbnails"
 THUMBNAILS_DIR.mkdir(exist_ok=True)
 STREAM_FPS = 30  # Assumed FPS for clip recording
+
+
+# ============== Helper Functions ==============
+
+def verify_clip_file(file_path: Optional[str]) -> Optional[str]:
+    """
+    Return the file path only if the file exists, otherwise return None.
+    This ensures we don't return references to deleted files.
+    """
+    if not file_path:
+        return None
+    
+    # Check in clips directory
+    full_path = CLIPS_DIR / file_path
+    if full_path.exists():
+        return file_path
+    
+    # Check if it's already an absolute path or in thumbnails dir
+    if Path(file_path).exists():
+        return file_path
+    
+    # Check in thumbnails subdirectory
+    thumb_path = THUMBNAILS_DIR / file_path
+    if thumb_path.exists():
+        return file_path
+    
+    return None
 
 
 # ============== Violence Detection Model ==============
@@ -599,10 +626,11 @@ class SimpleRTSPStream:
         self.last_prediction: Optional[dict] = None
         self.prediction_callback: Optional[Callable[[dict], None]] = None  # Set by manager
         
-        # Cached JPEG for low-latency streaming (encoded in capture loop)
+        # Cached JPEG for real-time streaming (encoded in capture loop)
         self._last_jpeg: Optional[bytes] = None
         self._last_jpeg_with_overlay: Optional[bytes] = None
-        self._jpeg_encode_quality = 85  # Higher quality for smoother video
+        self._jpeg_encode_quality = 50  # Minimum quality for fastest encoding (real-time)
+        self._jpeg_encode_params = [cv2.IMWRITE_JPEG_QUALITY, 50, cv2.IMWRITE_JPEG_OPTIMIZE, 0]
         
         # Violence alert cooldown tracking
         self._last_violence_alert_time = 0.0
@@ -651,51 +679,49 @@ class SimpleRTSPStream:
         logger.info(f"Stopped stream: {self.name}")
     
     def _capture_loop(self):
-        """Main capture loop - reads frames with minimal latency."""
+        """Main capture loop - REAL-TIME with zero delay."""
         while self.is_running:
             try:
                 if self.capture is None or not self.capture.isOpened():
                     self._connect()
                     continue
                 
-                # Read frame directly for minimal latency
+                # Flush any buffered frames to get the latest
+                # This is critical for real-time - discard old frames
+                self.capture.grab()  # Grab without decode to flush buffer
+                
+                # Now read the actual latest frame
                 ret, frame = self.capture.read()
                 if ret:
                     current_time = time.time()
                     
-                    # Encode JPEG once per frame for efficient streaming
-                    _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_encode_quality])
+                    # Fast JPEG encode with minimal quality for real-time
+                    _, jpeg = cv2.imencode('.jpg', frame, self._jpeg_encode_params)
                     jpeg_bytes = jpeg.tobytes()
                     
-                    # Create overlay version with violence score
-                    overlay_frame = frame.copy()
+                    # Create overlay directly on frame (no copy for speed)
                     score = self.last_prediction.get('violence_score', 0) if self.last_prediction else 0
                     score_pct = int(score * 100)
                     
-                    # Draw score overlay
-                    color = (0, 0, 255) if score > 0.65 else (0, 255, 255) if score > 0.4 else (0, 255, 0)  # BGR
-                    cv2.rectangle(overlay_frame, (10, 10), (180, 50), (0, 0, 0), -1)  # Black background
-                    cv2.putText(overlay_frame, f"Violence: {score_pct}%", (15, 40), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                    # Draw minimal overlay for speed
+                    color = (0, 0, 255) if score > 0.65 else (0, 255, 255) if score > 0.4 else (0, 255, 0)
+                    cv2.rectangle(frame, (10, 10), (160, 45), (0, 0, 0), -1)
+                    cv2.putText(frame, f"{score_pct}%", (15, 38), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
                     
-                    # Draw score bar
-                    bar_width = int(150 * score)
-                    cv2.rectangle(overlay_frame, (15, 55), (15 + bar_width, 65), color, -1)
-                    cv2.rectangle(overlay_frame, (15, 55), (165, 65), (128, 128, 128), 1)
-                    
-                    _, overlay_jpeg = cv2.imencode('.jpg', overlay_frame, [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_encode_quality])
+                    _, overlay_jpeg = cv2.imencode('.jpg', frame, self._jpeg_encode_params)
                     overlay_jpeg_bytes = overlay_jpeg.tobytes()
                     
+                    # Minimal lock time - just swap pointers
                     with self._lock:
                         self.last_frame = frame
                         self._last_jpeg = jpeg_bytes
                         self._last_jpeg_with_overlay = overlay_jpeg_bytes
-                        self.frame_buffer.append(frame.copy())
+                        self.frame_buffer.append(frame)
                         self.frame_count += 1
                         self.is_connected = True
                         self.error = None
                     
-                    # Feed frame to event recorder for pre-buffer
+                    # Feed frame to event recorder
                     self.event_recorder.add_frame(frame, current_time)
                 else:
                     self.is_connected = False
@@ -757,7 +783,7 @@ class SimpleRTSPStream:
                     
                     # Feed RAW score to event recorder (use raw score for detection to catch spikes)
                     # This ensures we don't miss violence events due to smoothing
-                    current_frame = frames[-1] if frames else None
+                    current_frame = frames[-1].copy() if frames else None
                     if current_frame is not None:
                         self.event_recorder.on_prediction(raw_score, current_frame, time.time())
                     
@@ -816,41 +842,57 @@ class SimpleRTSPStream:
             
             logger.info(f"Connecting to: {self.url}")
             
-            # Use FFmpeg backend with low-latency options
-            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;udp|fflags;nobuffer|flags;low_delay|framedrop;1|timeout;5000000'
+            # Use FFmpeg backend with aggressive low-latency options
+            # REAL-TIME FFmpeg options - UDP for lowest latency
+            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = (
+                'rtsp_transport;udp|'  # UDP = lowest latency (no TCP handshake)
+                'fflags;nobuffer+discardcorrupt+fastseek|'  # No buffering at all
+                'flags;low_delay|'  # Low delay decoding
+                'framedrop;1|'  # Drop frames if behind
+                'max_delay;0|'  # Zero delay
+                'reorder_queue_size;0|'  # No packet reordering
+                'analyzeduration;100000|'  # 0.1s analyze (minimal)
+                'probesize;32768|'  # Tiny probe (32KB)
+                'flush_packets;1|'  # Flush immediately
+                'avioflags;direct|'  # Direct I/O
+                'timeout;2000000'  # 2s timeout
+            )
             
             self.capture = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
             
-            # Reduce buffer for minimal latency
-            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # ZERO buffer for real-time
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 0)
             
-            # Set frame dimensions if needed
-            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            # Native resolution for speed (no resize overhead)
+            # self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            # self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             
-            # Wait up to 5 seconds for connection
+            # Match camera FPS
+            self.capture.set(cv2.CAP_PROP_FPS, 30)
+            
+            # Fast connection - wait only 3 seconds
             connect_start = time.time()
-            while time.time() - connect_start < 5:
+            while time.time() - connect_start < 3:
                 if self.capture.isOpened():
                     # Try to read a test frame to confirm connection
                     ret, _ = self.capture.read()
                     if ret:
                         self.is_connected = True
                         self.error = None
-                        logger.info(f"Connected: {self.name}")
+                        logger.info(f"✓ Connected: {self.name}")
                         return
-                time.sleep(0.5)
+                time.sleep(0.1)  # Check more frequently
             
             # Connection timed out
             self.is_connected = False
             self.error = "Connection timed out - check RTSP URL"
             logger.warning(f"Connection timeout: {self.name} - {self.url}")
-            time.sleep(2)
+            time.sleep(1)  # Shorter retry delay
                 
         except Exception as e:
             self.error = str(e)
             self.is_connected = False
-            time.sleep(2)
+            time.sleep(1)  # Shorter retry delay
     
     def get_frame(self) -> Optional[np.ndarray]:
         """Get the latest frame."""
@@ -1194,16 +1236,19 @@ async def mjpeg_stream(stream_id: int, overlay: bool = True):
         raise HTTPException(status_code=404, detail="Stream not found")
     
     async def generate():
-        last_frame = None
+        """Zero-delay frame generator - push every new frame immediately."""
+        last_id = 0
         while True:
             jpeg = stream.get_jpeg(with_overlay=overlay)
-            if jpeg and jpeg != last_frame:
+            frame_id = stream.frame_count
+            if jpeg and frame_id != last_id:
                 yield (
                     b'--frame\r\n'
-                    b'Content-Type: image/jpeg\r\n\r\n' + jpeg + b'\r\n'
+                    b'Content-Type: image/jpeg\r\n'
+                    b'Content-Length: ' + str(len(jpeg)).encode() + b'\r\n\r\n' + jpeg + b'\r\n'
                 )
-                last_frame = jpeg
-            await asyncio.sleep(0.008)  # ~120 FPS max for smoother real-time display
+                last_id = frame_id
+            await asyncio.sleep(0)  # Yield immediately, no delay
     
     return StreamingResponse(
         generate(),
@@ -1287,29 +1332,33 @@ async def get_events(limit: int = 50, offset: int = 0, status: Optional[str] = N
             count_result = await session.execute(count_query)
             total_count = len(count_result.scalars().all())
             
+            # Build event list, checking if clip files exist
+            event_list = []
+            for e in events:
+                clip_exists = verify_clip_file(e.clip_path)
+                thumb_exists = verify_clip_file(e.thumbnail_path)
+                event_list.append({
+                    "id": e.id,
+                    "event_id": str(e.id),  # For compatibility
+                    "stream_id": e.stream_id,
+                    "stream_name": e.stream_name,
+                    "start_time": e.start_time.isoformat() if e.start_time else None,
+                    "end_time": e.end_time.isoformat() if e.end_time else None,
+                    "duration_seconds": e.duration_seconds if clip_exists else None,
+                    "max_confidence": e.max_confidence,
+                    "peak_confidence": e.max_confidence,  # Alias
+                    "avg_confidence": e.avg_confidence,
+                    "severity": e.severity.value if e.severity else None,
+                    "status": e.status.value if e.status else None,
+                    "clip_path": clip_exists,
+                    "clip_duration": e.clip_duration if clip_exists else None,
+                    "thumbnail_path": thumb_exists,
+                    "created_at": e.created_at.isoformat() if e.created_at else None
+                })
+            
             return {
                 "success": True,
-                "data": [
-                    {
-                        "id": e.id,
-                        "event_id": str(e.id),  # For compatibility
-                        "stream_id": e.stream_id,
-                        "stream_name": e.stream_name,
-                        "start_time": e.start_time.isoformat() if e.start_time else None,
-                        "end_time": e.end_time.isoformat() if e.end_time else None,
-                        "duration_seconds": e.duration_seconds,
-                        "max_confidence": e.max_confidence,
-                        "peak_confidence": e.max_confidence,  # Alias
-                        "avg_confidence": e.avg_confidence,
-                        "severity": e.severity.value if e.severity else None,
-                        "status": e.status.value if e.status else None,
-                        "clip_path": e.clip_path,
-                        "clip_duration": e.clip_duration,
-                        "thumbnail_path": e.thumbnail_path,
-                        "created_at": e.created_at.isoformat() if e.created_at else None
-                    }
-                    for e in events
-                ],
+                "data": event_list,
                 "pagination": {
                     "limit": limit,
                     "offset": offset,
@@ -1342,6 +1391,8 @@ async def get_event(event_id: str):
             )
             e = result.scalar_one_or_none()
             if e:
+                clip_exists = verify_clip_file(e.clip_path)
+                thumb_exists = verify_clip_file(e.thumbnail_path)
                 return {
                     "success": True,
                     "data": {
@@ -1351,14 +1402,14 @@ async def get_event(event_id: str):
                         "stream_name": e.stream_name,
                         "start_time": e.start_time.isoformat() if e.start_time else None,
                         "end_time": e.end_time.isoformat() if e.end_time else None,
-                        "duration_seconds": e.duration_seconds,
+                        "duration_seconds": e.duration_seconds if clip_exists else None,
                         "max_confidence": e.max_confidence,
                         "avg_confidence": e.avg_confidence,
                         "severity": e.severity.value if e.severity else None,
                         "status": e.status.value if e.status else None,
-                        "clip_path": e.clip_path,
-                        "clip_duration": e.clip_duration,
-                        "thumbnail_path": e.thumbnail_path,
+                        "clip_path": clip_exists,
+                        "clip_duration": e.clip_duration if clip_exists else None,
+                        "thumbnail_path": thumb_exists,
                         "created_at": e.created_at.isoformat() if e.created_at else None
                     }
                 }

@@ -58,16 +58,13 @@ export function StreamCard({
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
-  // Reset image state and refresh when stream status changes
   useEffect(() => {
     if (isStreamActive) {
       setImageError(false);
       setImageLoading(true);
-      // Generate new cache-busting key to force fresh stream load
       setStreamKey(Date.now());
     }
 
-    // Cleanup retry timeout on unmount or status change
     return () => {
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
@@ -99,8 +96,8 @@ export function StreamCard({
       }
     };
 
-    // Check immediately and then poll every 200ms
-    const pollInterval = setInterval(checkLoaded, 200);
+    // Check immediately and then poll every 100ms for faster detection
+    const pollInterval = setInterval(checkLoaded, 100);
     checkLoaded();
 
     // If we still don't have a decoded frame after a reasonable time, surface an error
@@ -110,7 +107,7 @@ export function StreamCard({
         setImageLoading(false);
         setImageError(true);
       }
-    }, 12000);
+    }, 8000); // 8 second timeout (reduced from 12s)
 
     return () => {
       clearInterval(pollInterval);
@@ -253,8 +250,9 @@ export function StreamCard({
     reconnecting: "bg-yellow-500", // Reconnecting status
   };
 
-  // Violence score indicator
-  const violenceScore = score?.violence_score ?? 0;
+  // Violence score indicator - use WebSocket score or fallback to API's last_prediction
+  const violenceScore =
+    score?.violence_score ?? stream.last_prediction?.violence_score ?? 0;
   const scoreColor =
     violenceScore > 0.65
       ? "text-red-500"
@@ -303,6 +301,21 @@ export function StreamCard({
             </h3>
           </div>
           <div className="flex items-center gap-2">
+            {/* Violence Score Badge - Always visible when stream is active */}
+            {isStreamActive && (
+              <div
+                className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                  violenceScore > 0.65
+                    ? "bg-red-500/20 text-red-400 animate-pulse"
+                    : violenceScore > 0.4
+                      ? "bg-yellow-500/20 text-yellow-400"
+                      : "bg-green-500/20 text-green-400"
+                }`}
+                title={`Violence Score: ${(violenceScore * 100).toFixed(1)}%`}
+              >
+                {(violenceScore * 100).toFixed(0)}%
+              </div>
+            )}
             {/* View Toggle Button */}
             {isStreamActive && (
               <button
@@ -422,7 +435,9 @@ export function StreamCard({
                   ref={imgRef}
                   src={mjpegUrl}
                   alt={`${stream.name} live feed`}
-                  className={`w-full h-full object-contain ${imageLoading ? "opacity-0" : "opacity-100"} transition-opacity duration-300`}
+                  loading="eager"
+                  decoding="async"
+                  className={`w-full h-full object-contain ${imageLoading ? "opacity-0" : "opacity-100"} transition-opacity duration-100`}
                   onLoad={handleImageLoad}
                   onError={handleImageError}
                 />
@@ -503,10 +518,16 @@ export function StreamCard({
                     transition={{ duration: 0.3 }}
                   />
                 </div>
-                {score && (
+                {(score || stream.last_prediction) && (
                   <p className="text-xs text-gray-500 mt-1">
-                    {score.fps?.toFixed(1)} FPS •{" "}
-                    {new Date(score.timestamp).toLocaleTimeString()}
+                    {score?.fps?.toFixed(1)
+                      ? `${score.fps.toFixed(1)} FPS • `
+                      : ""}
+                    {new Date(
+                      score?.timestamp ||
+                        stream.last_prediction?.timestamp ||
+                        Date.now(),
+                    ).toLocaleTimeString()}
                   </p>
                 )}
               </div>

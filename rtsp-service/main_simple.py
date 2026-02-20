@@ -36,7 +36,7 @@ logger.add(sys.stderr, level="INFO", format="<green>{time:HH:mm:ss}</green> | <l
 MODEL_PATH = Path(__file__).parent / ".." / "ml-service" / "models" / "violence_model_legacy.h5"
 EXPECTED_FRAMES = 16
 TARGET_SIZE = (224, 224)
-INFERENCE_INTERVAL = 0.5  # Run inference every 0.5 seconds
+INFERENCE_INTERVAL = 0.2  # Run inference every 0.5 seconds
 VIOLENCE_THRESHOLD = float(os.getenv("VIOLENCE_THRESHOLD", "0.50"))  # 50% for is_violent flag
 VIOLENCE_ALERT_THRESHOLD = float(os.getenv("VIOLENCE_ALERT_THRESHOLD", "0.90"))  # Alert at 90%+ (instant notification)
 VIOLENCE_ALERT_COOLDOWN = float(os.getenv("VIOLENCE_ALERT_COOLDOWN", "5.0"))  # 5 second cooldown between alerts

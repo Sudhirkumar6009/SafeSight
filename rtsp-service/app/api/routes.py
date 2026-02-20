@@ -23,6 +23,34 @@ from app.manager import stream_manager
 router = APIRouter()
 
 
+# ============== Helper Functions ==============
+
+def verify_file_path(file_path, base_dir = None) -> Optional[str]:
+    """
+    Check if a file exists and return the path if it does, otherwise return None.
+    This prevents returning paths to files that don't exist (deleted, never created, etc.)
+    """
+    if not file_path:
+        return None
+    
+    # Convert to string if it's a SQLAlchemy Column value
+    file_path_str = str(file_path) if file_path else None
+    if not file_path_str:
+        return None
+    
+    # Determine the full path based on how paths are stored
+    if base_dir:
+        full_path = Path(base_dir) / file_path_str
+    else:
+        # If path is relative, use clips_dir as base
+        if not os.path.isabs(file_path_str):
+            full_path = Path(settings.clips_dir) / file_path_str
+        else:
+            full_path = Path(file_path_str)
+    
+    return file_path_str if full_path.exists() else None
+
+
 # ============== Pydantic Models ==============
 
 class StreamCreate(BaseModel):
@@ -410,27 +438,31 @@ async def list_events(
         offset=offset
     )
     
+    # Build event list, checking if clip files exist
+    event_list = []
+    for e in events:
+        clip_exists = verify_file_path(e.clip_path)
+        thumb_exists = verify_file_path(e.thumbnail_path)
+        event_list.append({
+            "id": e.id,
+            "stream_id": e.stream_id,
+            "stream_name": e.stream_name,
+            "start_time": e.start_time.isoformat() if e.start_time else None,
+            "end_time": e.end_time.isoformat() if e.end_time else None,
+            "duration_seconds": e.duration_seconds if clip_exists else None,
+            "max_confidence": e.max_confidence,
+            "avg_confidence": e.avg_confidence,
+            "severity": e.severity.value if e.severity else None,
+            "status": e.status.value if e.status else None,
+            "clip_path": clip_exists,
+            "clip_duration": e.clip_duration if clip_exists else None,
+            "thumbnail_path": thumb_exists,
+            "created_at": e.created_at.isoformat() if e.created_at else None
+        })
+    
     return {
         "success": True,
-        "data": [
-            {
-                "id": e.id,
-                "stream_id": e.stream_id,
-                "stream_name": e.stream_name,
-                "start_time": e.start_time.isoformat() if e.start_time else None,
-                "end_time": e.end_time.isoformat() if e.end_time else None,
-                "duration_seconds": e.duration_seconds,
-                "max_confidence": e.max_confidence,
-                "avg_confidence": e.avg_confidence,
-                "severity": e.severity.value if e.severity else None,
-                "status": e.status.value if e.status else None,
-                "clip_path": e.clip_path,
-                "clip_duration": e.clip_duration,
-                "thumbnail_path": e.thumbnail_path,
-                "created_at": e.created_at.isoformat() if e.created_at else None
-            }
-            for e in events
-        ],
+        "data": event_list,
         "pagination": {
             "limit": limit,
             "offset": offset,
@@ -443,23 +475,28 @@ async def list_events(
 async def get_pending_events():
     """Get all pending events requiring review."""
     events = await stream_manager.get_events(status=EventStatus.PENDING)
+    
+    # Build event list, checking if clip files exist
+    event_list = []
+    for e in events:
+        clip_exists = verify_file_path(e.clip_path)
+        thumb_exists = verify_file_path(e.thumbnail_path)
+        event_list.append({
+            "id": e.id,
+            "stream_id": e.stream_id,
+            "stream_name": e.stream_name,
+            "start_time": e.start_time.isoformat() if e.start_time else None,
+            "duration_seconds": e.duration_seconds if clip_exists else None,
+            "max_confidence": e.max_confidence,
+            "severity": e.severity.value if e.severity else None,
+            "clip_path": clip_exists,
+            "clip_duration": e.clip_duration if clip_exists else None,
+            "thumbnail_path": thumb_exists
+        })
+    
     return {
         "success": True,
-        "data": [
-            {
-                "id": e.id,
-                "stream_id": e.stream_id,
-                "stream_name": e.stream_name,
-                "start_time": e.start_time.isoformat() if e.start_time else None,
-                "duration_seconds": e.duration_seconds,
-                "max_confidence": e.max_confidence,
-                "severity": e.severity.value if e.severity else None,
-                "clip_path": e.clip_path,
-                "clip_duration": e.clip_duration,
-                "thumbnail_path": e.thumbnail_path
-            }
-            for e in events
-        ],
+        "data": event_list,
         "count": len(events)
     }
 
