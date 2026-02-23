@@ -1,8 +1,24 @@
 <div align="center">
 
-# 🎬 ViolenceSense
+# 🛡️ SafeSight
 
-### AI-Powered Real-Time Video Violence Detection System
+### _formerly known as **ViolenceSense**_
+
+<br/>
+
+## 🏆 1st Place — IBM SkillsBuild AI Innovation Challenge 2026
+
+**Organized by CSRBOX® at i-Hub Gujarat · Among 35+ shortlisted teams**
+
+<br/>
+
+<img src="https://img.shields.io/badge/🥇_1st_Place-IBM_SkillsBuild_AI_Innovation_Challenge_2026-FFD700?style=for-the-badge" alt="Winner Badge"/>
+
+<br/><br/>
+
+> **AI-powered surveillance system built on a GPU-trained MobileNetV2-LSTM architecture, optimized for real-time CPU deployment — delivering 95%+ violence detection accuracy with confidence scoring.**
+
+<br/>
 
 [![Report](https://img.shields.io/badge/📄_Project_Report-View_PDF-2196F3?style=for-the-badge)](https://drive.google.com/file/d/1qN-nHZitUcRVDV3NqruWSkXukgkPH05f)
 [![Dataset](https://img.shields.io/badge/📊_Dataset-Kaggle-20BEFF?style=for-the-badge)](https://www.kaggle.com/datasets/mohamedmustafa/real-life-violence-situations-dataset)
@@ -14,111 +30,93 @@
 [![TensorFlow](https://img.shields.io/badge/TensorFlow-2.x-FF6F00?style=flat-square&logo=tensorflow&logoColor=white)](https://tensorflow.org)
 [![Next.js](https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://mongodb.com)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 <br/>
 
-<img src="./docs/banner.png" alt="ViolenceSense Banner" width="800"/>
-
-<p align="center">
-  <strong>Detect violence in videos using state-of-the-art deep learning models</strong>
-</p>
-
-[Features](#-features) •
-[Demo](#-live-demo) •
-[Architecture](#-architecture) •
-[Installation](#-installation) •
-[API](#-api-reference) •
-[Model](#-model-information) •
-[Contributing](#-contributing)
+[The Problem](#-the-problem) •
+[Our Approach](#-our-approach) •
+[Key Features](#-key-features) •
+[Architecture](#️-architecture) •
+[Tech Stack](#️-tech-stack) •
+[Getting Started](#-getting-started) •
+[Model](#-model-details) •
+[Team](#-team)
 
 </div>
 
 ---
 
-## 📋 Table of Contents
+## 🎯 The Problem
 
-- [Overview](#-overview)
-- [Features](#-features)
-- [Live Demo](#-live-demo)
-- [Architecture](#-architecture)
-- [Tech Stack](#-tech-stack)
-- [Project Structure](#-project-structure)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [API Reference](#-api-reference)
-- [Model Information](#-model-information)
-- [Screenshots](#-screenshots)
-- [Performance](#-performance)
-- [Contributing](#-contributing)
-- [License](#-license)
+Security cameras today are **reactive** — they record incidents but **do not prevent escalation**.
+
+- 📹 Over **99% of surveillance footage is never reviewed**
+- 🧑‍💻 Monitoring remains **manual, slow, and inefficient**
+- ⏱️ Critical events are identified **hours or days after they occur**
+- 💰 Real-time GPU-based solutions are **expensive and hard to scale**
+
+There is a clear need for an intelligent, automated system that can detect violence **as it happens** — not after the fact.
 
 ---
 
-## 🎯 Overview
+## 💡 Our Approach
 
-**ViolenceSense** is a production-ready, full-stack AI web application that performs real-time violence detection in video content. Built with modern technologies and deep learning, it provides:
+We trained a **large-scale deep learning model using GPU acceleration** and deployed it in an **optimized CPU environment**. This eliminates dependency on expensive GPU hardware while maintaining real-time violence scoring and high detection accuracy.
 
-- 🔍 **Accurate Detection**: MobileNetV2-LSTM architecture with 90%+ accuracy
-- ⚡ **Real-time Analysis**: Fast inference using optimized TensorFlow models
-- 📊 **Detailed Insights**: Confidence scores, probabilities, and frame analysis
-- 🌐 **Cloud-Ready**: Deployed on Vercel, Render, and Hugging Face Spaces
+```
+ GPU-Trained Model  ──►  CPU-Optimized Deployment  ──►  Scalable & Cloud-Ready
+    (Training)               (Inference)                  (Production)
+```
 
-### Use Cases
-
-- 🏫 **Educational Institutions**: Monitor campus security footage
-- 🏢 **Corporate Security**: Automated surveillance analysis
-- 📱 **Social Media Platforms**: Content moderation at scale
-- 🎮 **Gaming/Streaming**: Real-time content filtering
-- 🔬 **Research**: Violence detection dataset analysis
+The result is a **production-ready, full-stack AI system** that bridges the gap between experimental research and real-world deployment — making intelligent surveillance **accessible, scalable, and affordable**.
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
 <table>
 <tr>
-<td width="50%">
+<td width="50%" valign="top">
 
-### 🎥 Video Processing
-
-- Multi-format support (MP4, AVI, MOV, MKV)
-- Automatic frame extraction & preprocessing
-- GridFS storage in MongoDB Atlas
-- Streaming playback support
+### 🎯 95%+ Model Accuracy
+State-of-the-art violence detection powered by a fine-tuned **MobileNetV2-LSTM** architecture with GPU-accelerated training.
 
 </td>
-<td width="50%">
+<td width="50%" valign="top">
 
-### 🤖 AI Analysis
-
-- MobileNetV2-LSTM deep learning model
-- Binary classification (Violence/Non-Violence)
-- Confidence scores with probabilities
-- Batch processing capability
+### ⚡ Real-Time Inference Pipeline
+Optimized for **CPU deployment** — no GPU required at runtime. Fast, lightweight, and production-ready.
 
 </td>
 </tr>
 <tr>
-<td width="50%">
+<td width="50%" valign="top">
 
-### 📊 Dashboard
-
-- Real-time prediction results
-- Video history management
-- Model status monitoring
-- Interactive visualizations
+### 📊 Confidence Scoring & Insights
+Every prediction includes **confidence percentages**, probability distributions, and **frame-level analysis** for full transparency.
 
 </td>
-<td width="50%">
+<td width="50%" valign="top">
 
-### 🔧 Developer Experience
+### 🔌 Live RTSP Stream Monitoring
+Connect IP cameras and **RTSP streams** for continuous, real-time violence detection with automated alerts and clip saving.
 
-- RESTful API with full documentation
-- TypeScript throughout
-- Docker support
-- CI/CD ready
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 📹 Video Upload & Analysis
+Upload videos in **MP4, AVI, MOV, MKV** formats for on-demand violence detection with detailed results and playback.
+
+</td>
+<td width="50%" valign="top">
+
+### ☁️ Scalable & Cloud-Ready
+Designed for deployment across **institutions, enterprises, and content platforms** — dockerized and horizontally scalable.
 
 </td>
 </tr>
@@ -126,52 +124,46 @@
 
 ---
 
-## 🌐 Live Demo
-
-| Service            | URL                                                                                                                  | Status                                                                                 |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| 🖥️ **Frontend**    | [violencesense.vercel.app](https://violencesense.vercel.app)                                                         | ![Vercel](https://img.shields.io/badge/Vercel-Live-00C853?style=flat-square)           |
-| ⚙️ **Backend API** | [violencesense-api.onrender.com](https://violencesense-api.onrender.com)                                             | ![Render](https://img.shields.io/badge/Render-Live-46E3B7?style=flat-square)           |
-| 🧠 **ML Service**  | [huggingface.co/spaces/SudhirKuchara/violencesense-ml](https://huggingface.co/spaces/SudhirKuchara/violencesense-ml) | ![HuggingFace](https://img.shields.io/badge/HuggingFace-Live-FFD21E?style=flat-square) |
-
----
-
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        ViolenceSense System Architecture                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│    ┌─────────────┐         ┌─────────────┐         ┌─────────────────┐     │
-│    │   Client    │  HTTPS  │   Vercel    │         │  Hugging Face   │     │
-│    │   Browser   │◄───────►│   (Next.js) │         │    Spaces       │     │
-│    └─────────────┘         └──────┬──────┘         └────────┬────────┘     │
-│                                   │                          │              │
-│                                   │ REST API                 │ FastAPI      │
-│                                   ▼                          │              │
-│                            ┌─────────────┐                   │              │
-│                            │   Render    │◄──────────────────┘              │
-│                            │  (Node.js)  │     ML Inference                 │
-│                            └──────┬──────┘                                  │
-│                                   │                                         │
-│                                   │ Mongoose                                │
-│                                   ▼                                         │
-│                            ┌─────────────┐                                  │
-│                            │  MongoDB    │                                  │
-│                            │   Atlas     │                                  │
-│                            │  (GridFS)   │                                  │
-│                            └─────────────┘                                  │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                       SafeSight — System Architecture                          │
+├────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│   ┌──────────────┐       ┌──────────────┐       ┌──────────────────────┐      │
+│   │   Client     │ HTTPS │   Next.js    │       │   ML Service         │      │
+│   │   Browser    │◄─────►│   Frontend   │       │   (FastAPI +         │      │
+│   └──────────────┘       └──────┬───────┘       │    TensorFlow)       │      │
+│                                 │                └──────────┬───────────┘      │
+│                                 │ REST API                  │                  │
+│                                 ▼                           │ Inference        │
+│                          ┌──────────────┐                   │                  │
+│                          │   Backend    │◄──────────────────┘                  │
+│                          │  (Node.js /  │                                      │
+│                          │   Express)   │       ┌──────────────────────┐       │
+│                          └──────┬───────┘       │   RTSP Service       │      │
+│                                 │               │   (Live Streams)     │      │
+│                                 │ Mongoose      └──────────────────────┘      │
+│                                 ▼                                              │
+│                          ┌──────────────┐                                      │
+│                          │   MongoDB    │                                      │
+│                          │   Atlas      │                                      │
+│                          │   (GridFS)   │                                      │
+│                          └──────────────┘                                      │
+│                                                                                │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow
+### Core Services
 
-1. **Upload**: User uploads video → Frontend → Backend → MongoDB GridFS
-2. **Process**: Backend extracts video → Sends to ML Service for inference
-3. **Analyze**: ML Service processes frames → Returns prediction
-4. **Display**: Results stored in MongoDB → Displayed on Frontend
+| Service | Description |
+|---------|-------------|
+| **Frontend** | Next.js 14 dashboard with real-time monitoring, video management, and prediction history |
+| **Backend** | Express.js REST API handling video storage, inference orchestration, and data management |
+| **ML Service** | FastAPI service running the TensorFlow MobileNetV2-LSTM model for violence inference |
+| **RTSP Service** | Live stream processing service for IP camera / RTSP stream monitoring |
+| **Database** | MongoDB Atlas with GridFS for video storage and structured prediction data |
 
 ---
 
@@ -180,18 +172,16 @@
 <table>
 <tr>
 <th>Layer</th>
-<th>Technology</th>
-<th>Purpose</th>
+<th>Technologies</th>
 </tr>
 <tr>
 <td><strong>Frontend</strong></td>
 <td>
 <img src="https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=next.js" />
 <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-<img src="https://img.shields.io/badge/Tailwind-38B2AC?style=flat-square&logo=tailwind-css&logoColor=white" />
+<img src="https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat-square&logo=tailwind-css&logoColor=white" />
 <img src="https://img.shields.io/badge/Framer_Motion-0055FF?style=flat-square&logo=framer&logoColor=white" />
 </td>
-<td>UI, Animations, Styling</td>
 </tr>
 <tr>
 <td><strong>Backend</strong></td>
@@ -200,17 +190,15 @@
 <img src="https://img.shields.io/badge/Express-000000?style=flat-square&logo=express&logoColor=white" />
 <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" />
 </td>
-<td>REST API, File Handling</td>
 </tr>
 <tr>
-<td><strong>ML Service</strong></td>
+<td><strong>ML / AI</strong></td>
 <td>
 <img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white" />
 <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" />
 <img src="https://img.shields.io/badge/TensorFlow-FF6F00?style=flat-square&logo=tensorflow&logoColor=white" />
 <img src="https://img.shields.io/badge/OpenCV-5C3EE8?style=flat-square&logo=opencv&logoColor=white" />
 </td>
-<td>Deep Learning Inference</td>
 </tr>
 <tr>
 <td><strong>Database</strong></td>
@@ -218,323 +206,30 @@
 <img src="https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white" />
 <img src="https://img.shields.io/badge/GridFS-47A248?style=flat-square&logo=mongodb&logoColor=white" />
 </td>
-<td>Data & Video Storage</td>
 </tr>
 <tr>
 <td><strong>Deployment</strong></td>
 <td>
+<img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" />
 <img src="https://img.shields.io/badge/Vercel-000000?style=flat-square&logo=vercel&logoColor=white" />
 <img src="https://img.shields.io/badge/Render-46E3B7?style=flat-square&logo=render&logoColor=white" />
 <img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=flat-square&logo=huggingface&logoColor=black" />
 </td>
-<td>Cloud Hosting</td>
 </tr>
 </table>
 
 ---
 
-## 📁 Project Structure
+## 🧠 Model Details
 
-```
-ViolenceSense/
-│
-├── 📂 frontend/                    # Next.js 14 Frontend Application
-│   ├── app/                        # App Router pages
-│   │   ├── page.tsx               # Home/Dashboard
-│   │   ├── upload/                # Video upload page
-│   │   ├── videos/                # Video gallery & player
-│   │   ├── predictions/           # Prediction history
-│   │   ├── model/                 # Model management
-│   │   └── settings/              # App settings
-│   ├── components/                 # Reusable UI components
-│   ├── services/                   # API service layer
-│   ├── hooks/                      # Custom React hooks
-│   ├── types/                      # TypeScript definitions
-│   └── lib/                        # Utility functions
-│
-├── 📂 backend/                     # Express.js API Server
-│   ├── src/
-│   │   ├── controllers/           # Request handlers
-│   │   ├── routes/                # API route definitions
-│   │   ├── models/                # MongoDB schemas
-│   │   ├── middleware/            # Express middleware
-│   │   ├── services/              # Business logic
-│   │   ├── config/                # Configuration (DB, GridFS)
-│   │   └── utils/                 # Helper utilities
-│   └── uploads/                    # Temporary file storage
-│
-├── 📂 ml-service/                  # Python ML Inference Service
-│   ├── app/
-│   │   ├── models/                # Model loading logic
-│   │   ├── inference/             # Inference pipeline
-│   │   └── utils/                 # Video processing utils
-│   ├── models/                     # Trained model files (.h5)
-│   └── main.py                     # FastAPI application
-│
-├── 📂 models/                      # Shared model storage
-│   └── violence_model_legacy.h5   # Trained Keras model
-│
-├── 📄 docker-compose.yml           # Docker orchestration
-├── 📄 setup.bat / setup.sh         # Setup scripts
-└── 📄 README.md                    # This file
-```
-
----
-
-## 🚀 Installation
-
-### Prerequisites
-
-| Requirement | Version | Installation                                    |
-| ----------- | ------- | ----------------------------------------------- |
-| Node.js     | 18+     | [nodejs.org](https://nodejs.org)                |
-| Python      | 3.9+    | [python.org](https://python.org)                |
-| MongoDB     | 6+      | [mongodb.com](https://mongodb.com) or use Atlas |
-| Git         | Latest  | [git-scm.com](https://git-scm.com)              |
-
-### Quick Start
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/Sudhirkumar6009/ViolenceSense.git
-cd ViolenceSense
-
-# 2. Run the setup script
-# Windows:
-.\setup.bat
-
-# Linux/Mac:
-chmod +x setup.sh && ./setup.sh
-```
-
-### Manual Installation
-
-<details>
-<summary><strong>Frontend Setup</strong></summary>
-
-```bash
-cd frontend
-npm install
-
-# Create environment file
-cp .env.local.example .env.local
-
-# Edit .env.local
-NEXT_PUBLIC_API_URL=http://localhost:5000/api/v1
-
-# Start development server
-npm run dev
-```
-
-</details>
-
-<details>
-<summary><strong>Backend Setup</strong></summary>
-
-```bash
-cd backend
-npm install
-
-# Create environment file
-cp .env.example .env
-
-# Edit .env with your MongoDB URI and ML Service URL
-MONGODB_URI=mongodb+srv://your-connection-string
-ML_SERVICE_URL=http://localhost:8000
-
-# Start development server
-npm run dev
-```
-
-</details>
-
-<details>
-<summary><strong>ML Service Setup</strong></summary>
-
-```bash
-cd ml-service
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or
-.\venv\Scripts\activate  # Windows
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the service
-python main.py
-```
-
-</details>
-
-### Using Docker
-
-```bash
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
-```
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-<details>
-<summary><strong>Frontend (.env.local)</strong></summary>
-
-| Variable              | Description     | Default                        |
-| --------------------- | --------------- | ------------------------------ |
-| `NEXT_PUBLIC_API_URL` | Backend API URL | `http://localhost:5000/api/v1` |
-
-</details>
-
-<details>
-<summary><strong>Backend (.env)</strong></summary>
-
-| Variable             | Description               | Default                             |
-| -------------------- | ------------------------- | ----------------------------------- |
-| `PORT`               | Server port               | `5000`                              |
-| `NODE_ENV`           | Environment               | `development`                       |
-| `MONGODB_URI`        | MongoDB connection string | -                                   |
-| `MONGODB_DB_NAME`    | Database name             | `ViolenceSense`                     |
-| `ML_SERVICE_URL`     | ML service URL            | `http://localhost:8000`             |
-| `DEFAULT_MODEL_PATH` | Model file path           | `./models/violence_model_legacy.h5` |
-| `MODEL_ARCHITECTURE` | Model type                | `keras-cnn`                         |
-| `CORS_ORIGIN`        | Allowed origins           | `http://localhost:3000`             |
-
-</details>
-
-<details>
-<summary><strong>ML Service (.env)</strong></summary>
-
-| Variable     | Description       | Default                             |
-| ------------ | ----------------- | ----------------------------------- |
-| `MODEL_PATH` | Path to .h5 model | `./models/violence_model_legacy.h5` |
-| `DEVICE`     | Inference device  | `cpu`                               |
-
-</details>
-
----
-
-## 📡 API Reference
-
-### Base URL
-
-```
-Production: https://violencesense-api.onrender.com/api/v1
-Development: http://localhost:5000/api/v1
-```
-
-### Endpoints
-
-<details>
-<summary><strong>📹 Videos</strong></summary>
-
-| Method   | Endpoint             | Description                 |
-| -------- | -------------------- | --------------------------- |
-| `POST`   | `/videos/upload`     | Upload a video file         |
-| `GET`    | `/videos`            | List all videos (paginated) |
-| `GET`    | `/videos/:id`        | Get video details           |
-| `GET`    | `/videos/:id/stream` | Stream video content        |
-| `DELETE` | `/videos/:id`        | Delete video                |
-
-**Upload Video Example:**
-
-```bash
-curl -X POST \
-  -F "video=@sample.mp4" \
-  https://violencesense-api.onrender.com/api/v1/videos/upload
-```
-
-</details>
-
-<details>
-<summary><strong>🤖 Inference</strong></summary>
-
-| Method | Endpoint             | Description            |
-| ------ | -------------------- | ---------------------- |
-| `POST` | `/inference/predict` | Run violence detection |
-
-**Predict Example:**
-
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"videoId": "64abc123..."}' \
-  https://violencesense-api.onrender.com/api/v1/inference/predict
-```
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "classification": "violence",
-    "confidence": 0.94,
-    "probabilities": {
-      "violence": 0.94,
-      "nonViolence": 0.06
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><strong>🧠 Model</strong></summary>
-
-| Method | Endpoint         | Description            |
-| ------ | ---------------- | ---------------------- |
-| `POST` | `/model/load`    | Load a model           |
-| `GET`  | `/model/status`  | Get model status       |
-| `GET`  | `/model/current` | Get current model info |
-
-</details>
-
-<details>
-<summary><strong>📊 Predictions</strong></summary>
-
-| Method | Endpoint           | Description            |
-| ------ | ------------------ | ---------------------- |
-| `GET`  | `/predictions`     | List all predictions   |
-| `GET`  | `/predictions/:id` | Get prediction details |
-
-</details>
-
-<details>
-<summary><strong>❤️ Health</strong></summary>
-
-| Method | Endpoint           | Description            |
-| ------ | ------------------ | ---------------------- |
-| `GET`  | `/health`          | API health check       |
-| `GET`  | `/health/detailed` | Detailed system status |
-
-</details>
-
----
-
-## 🧠 Model Information
-
-### Architecture
+### MobileNetV2-LSTM Architecture
 
 ```
 Input (16 frames × 224 × 224 × 3)
          │
          ▼
 ┌─────────────────────┐
-│  MobileNetV2 (CNN)  │  ← Feature extraction
-│  (pretrained)       │
+│  MobileNetV2 (CNN)  │  ← Pretrained feature extraction
 └─────────┬───────────┘
           │
           ▼
@@ -549,106 +244,136 @@ Input (16 frames × 224 × 224 × 3)
           │
           ▼
 ┌─────────────────────┐
-│   Dense + Dropout   │  ← Classification
+│   Dense + Dropout   │  ← Classification head
 └─────────┬───────────┘
           │
           ▼
     Output (2 classes)
-    [Violence, Non-Violence]
+    Violence · Non-Violence
 ```
 
-### Model Details
-
-| Property           | Value                      |
-| ------------------ | -------------------------- |
-| **Architecture**   | MobileNetV2 + LSTM         |
-| **Input Shape**    | (16, 224, 224, 3)          |
-| **Output Classes** | 2 (Violence, Non-Violence) |
-| **File Format**    | Keras H5 (.h5)             |
-| **File Size**      | ~15 MB                     |
-| **Framework**      | TensorFlow/Keras           |
-
-### Training Dataset
-
-The model was trained on the [Real Life Violence Situations Dataset](https://www.kaggle.com/datasets/mohamedmustafa/real-life-violence-situations-dataset):
-
-- **Total Videos**: 2,000
-- **Violence**: 1,000 videos
-- **Non-Violence**: 1,000 videos
-- **Source**: Real-life footage, movies, sports
+| Property | Value |
+|----------|-------|
+| **Architecture** | MobileNetV2 + LSTM |
+| **Training** | GPU-accelerated (Google Colab) |
+| **Deployment** | CPU-optimized inference |
+| **Accuracy** | 95%+ |
+| **Input Shape** | 16 frames × 224 × 224 × 3 |
+| **Output** | Binary (Violence / Non-Violence) |
+| **Framework** | TensorFlow / Keras |
+| **Dataset** | [Real Life Violence Situations](https://www.kaggle.com/datasets/mohamedmustafa/real-life-violence-situations-dataset) — 2,000 videos |
 
 ---
 
-## Screenshots
+## 🚀 Getting Started
 
-<div align="center">
+### Prerequisites
 
-| Dashboard                                      | Video Analysis                               |
-| ---------------------------------------------- | -------------------------------------------- |
-| ![Dashboard](./docs/screenshots/dashboard.png) | ![Analysis](./docs/screenshots/analysis.png) |
+| Requirement | Version |
+|-------------|---------|
+| Node.js | 18+ |
+| Python | 3.9+ |
+| MongoDB | 6+ (or Atlas) |
+| Git | Latest |
 
-| Upload                                   | Results                                    |
-| ---------------------------------------- | ------------------------------------------ |
-| ![Upload](./docs/screenshots/upload.png) | ![Results](./docs/screenshots/results.png) |
+### Quick Start
 
-</div>
+```bash
+# Clone the repository
+git clone https://github.com/Sudhirkumar6009/ViolenceSense.git
+cd ViolenceSense
+
+# Run the setup script
+# Windows:
+.\setup.bat
+
+# Linux/Mac:
+chmod +x setup.sh && ./setup.sh
+```
+
+### Docker
+
+```bash
+docker-compose up -d        # Start all services
+docker-compose logs -f      # View logs
+docker-compose down         # Stop services
+```
+
+> 📖 For detailed setup instructions, environment variables, and API documentation, see the **[Quick Start Guide](./docs/QUICKSTART.md)**, **[Architecture Docs](./docs/ARCHITECTURE.md)**, and **[API Reference](./docs/API.md)**.
 
 ---
 
-## 📈 Performance
+## 🌐 Live Demo
 
-### Inference Benchmarks
+| Service | URL | Status |
+|---------|-----|--------|
+| 🖥️ **Frontend** | [violencesense.vercel.app](https://violencesense.vercel.app) | ![Vercel](https://img.shields.io/badge/Vercel-Live-00C853?style=flat-square) |
+| ⚙️ **Backend API** | [violencesense-api.onrender.com](https://violencesense-api.onrender.com) | ![Render](https://img.shields.io/badge/Render-Live-46E3B7?style=flat-square) |
+| 🧠 **ML Service** | [huggingface.co/spaces/SudhirKuchara/violencesense-ml](https://huggingface.co/spaces/SudhirKuchara/violencesense-ml) | ![HuggingFace](https://img.shields.io/badge/HuggingFace-Live-FFD21E?style=flat-square) |
 
-| Metric             | Value           |
-| ------------------ | --------------- |
-| **Accuracy**       | 91.2%           |
-| **Precision**      | 89.5%           |
-| **Recall**         | 93.1%           |
-| **F1 Score**       | 91.3%           |
-| **Inference Time** | ~2-5s per video |
+---
 
-### System Requirements
+## 📁 Project Structure
 
-| Component   | Minimum  | Recommended     |
-| ----------- | -------- | --------------- |
-| **CPU**     | 2 cores  | 4+ cores        |
-| **RAM**     | 4 GB     | 8+ GB           |
-| **Storage** | 1 GB     | 5+ GB           |
-| **GPU**     | Optional | CUDA-compatible |
+```
+SafeSight/
+├── frontend/          → Next.js 14 dashboard & UI
+├── backend/           → Express.js REST API server
+├── ml-service/        → FastAPI + TensorFlow inference service
+├── rtsp-service/      → Live RTSP stream processing service
+├── docs/              → Architecture, API, and quickstart docs
+├── docker-compose.yml → Docker orchestration
+├── setup.bat / .sh    → One-click setup scripts
+└── README.md          → You are here
+```
+
+---
+
+## 👥 Team
+
+This project was built by:
+
+- **[Sudhir Kumar](https://github.com/Sudhirkumar6009)** — Full-stack development, system architecture, and deployment
+- **Jay Prajapati** — Model training, accuracy refinement, and presentation
+
+### 🎓 Mentorship
+
+Grateful to our mentors for strategic guidance, technical insights, and pushing us to refine both the model and its real-world applicability.
+
+---
+
+## 📈 Experience & Learning
+
+Building SafeSight was not just about training a model — it was about **engineering a deployable system**. From optimizing the MobileNetV2-LSTM architecture to reducing inference latency on CPU environments, we focused on making the solution **scalable and practical**, not just experimental.
+
+> _🚀 Winning this challenge validates our belief that AI systems should move beyond recording events — and toward **preventing them**._
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please follow these steps:
+Contributions are welcome! Please feel free to open issues or submit pull requests.
 
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/AmazingFeature`)
-3. **Commit** your changes (`git commit -m 'Add AmazingFeature'`)
-4. **Push** to the branch (`git push origin feature/AmazingFeature`)
+1. **Fork** the repository  
+2. **Create** a feature branch (`git checkout -b feature/YourFeature`)  
+3. **Commit** your changes (`git commit -m 'Add YourFeature'`)  
+4. **Push** to the branch (`git push origin feature/YourFeature`)  
 5. **Open** a Pull Request
-
-### Development Guidelines
-
-- Follow TypeScript best practices
-- Write meaningful commit messages
-- Add tests for new features
-- Update documentation as needed
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
 ---
 
 ## 🙏 Acknowledgments
 
-- [Real Life Violence Situations Dataset](https://www.kaggle.com/datasets/mohamedmustafa/real-life-violence-situations-dataset) by Mohamed Mustafa
-- [TensorFlow](https://tensorflow.org) team
-- [Next.js](https://nextjs.org) team
-- [FastAPI](https://fastapi.tiangolo.com) team
+- **[IBM SkillsBuild](https://skillsbuild.org/)** & **[CSRBOX®](https://csrbox.org/)** — For organizing the AI Innovation Challenge 2026
+- **i-Hub Gujarat** — For hosting the event
+- **[Real Life Violence Situations Dataset](https://www.kaggle.com/datasets/mohamedmustafa/real-life-violence-situations-dataset)** by Mohamed Mustafa
+- **[TensorFlow](https://tensorflow.org)**, **[Next.js](https://nextjs.org)**, **[FastAPI](https://fastapi.tiangolo.com)** — Open-source tools that made this possible
 
 ---
 
@@ -656,7 +381,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **⭐ Star this repository if you find it helpful!**
 
-Made with ❤️ by [Sudhir Kumar](https://github.com/Sudhirkumar6009)
+Made with ❤️ by [Sudhir Kumar](https://github.com/Sudhirkumar6009) & Jay Prajapati
 
 [![GitHub](https://img.shields.io/badge/GitHub-Sudhirkumar6009-181717?style=for-the-badge&logo=github)](https://github.com/Sudhirkumar6009)
 
