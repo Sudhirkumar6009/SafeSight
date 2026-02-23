@@ -80,9 +80,17 @@ class LocalModelInference:
     """
     Local model inference using the Keras model directly with GPU optimization.
     Falls back to ML service API if local model not available.
+    
+    The model is a full end-to-end MobileNetV2+LSTM architecture:
+    - Input: (batch, 16 frames, 224, 224, 3) - raw RGB frames
+    - TimeDistributed(MobileNetV2) -> feature extraction
+    - TimeDistributed(GlobalAveragePooling2D) -> (batch, 16, 1280)
+    - LSTM(64) -> (batch, 64)
+    - Dense(64, relu)
+    - Dense(1, sigmoid): violence probability
     """
     
-    # Model expects 16 frames at 224x224 resolution
+    # Model expects 16 frames of 224x224 RGB
     EXPECTED_FRAMES = 16
     TARGET_SIZE = (224, 224)
     
@@ -95,7 +103,7 @@ class LocalModelInference:
         self._load_model()
     
     def _load_model(self):
-        """Try to load the local model with Keras 3 compatibility handling and GPU optimization."""
+        """Load the full MobileNetV2+LSTM model with GPU optimization."""
         try:
             if not self.model_path or not Path(self.model_path).exists():
                 logger.warning(f"Local model not found at {self.model_path}, will use ML service API")
@@ -104,7 +112,6 @@ class LocalModelInference:
             import tensorflow as tf
             self._tf = tf
             from tensorflow import keras
-            from tensorflow.keras import layers
             
             # Log GPU status
             gpus = tf.config.list_physical_devices('GPU')
@@ -115,58 +122,29 @@ class LocalModelInference:
             else:
                 logger.warning("No GPU detected - inference will be slower")
             
-            # Try direct loading first
-            try:
-                self.model = tf.keras.models.load_model(self.model_path, compile=False)
-                self.use_local = True
-                logger.info(f"Loaded local model from: {self.model_path}")
-                self._warmup_model()
-                return
-            except Exception as e:
-                logger.warning(f"Direct model load failed: {str(e)[:100]}..., trying fallback...")
+            # Load the complete model directly (includes MobileNetV2 + LSTM)
+            logger.info(f"Loading full model from {self.model_path}...")
+            self.model = keras.models.load_model(self.model_path, compile=False)
             
-            # Fallback: Build fresh model architecture and load weights
-            # This fixes Keras 3 TimeDistributed compatibility issues
-            logger.info("Building fresh model architecture and loading weights...")
+            # Get expected frames from model input shape
+            input_shape = self.model.input_shape
+            if input_shape and len(input_shape) == 5 and input_shape[1]:
+                self.EXPECTED_FRAMES = input_shape[1]
             
-            # MobileNetV2-LSTM architecture: (batch, 16 frames, 224, 224, 3 channels)
-            input_shape = (self.EXPECTED_FRAMES, *self.TARGET_SIZE, 3)
+            logger.info(f"Model loaded successfully")
+            logger.info(f"  Input shape: {self.model.input_shape}")
+            logger.info(f"  Output shape: {self.model.output_shape}")
+            logger.info(f"  Expected frames: {self.EXPECTED_FRAMES}")
             
-            inputs = keras.Input(shape=input_shape)
-            
-            # TimeDistributed MobileNetV2 for frame-level features
-            base_model = keras.applications.MobileNetV2(
-                weights=None,
-                include_top=False,
-                input_shape=(224, 224, 3)
-            )
-            
-            # Apply MobileNetV2 to each frame
-            x = layers.TimeDistributed(base_model)(inputs)
-            
-            # Global average pooling for each frame
-            x = layers.TimeDistributed(layers.GlobalAveragePooling2D())(x)
-            
-            # LSTM for temporal modeling
-            x = layers.LSTM(64)(x)
-            
-            # Dense layers
-            x = layers.Dense(64, activation='relu')(x)
-            
-            # Output: violence probability
-            outputs = layers.Dense(1, activation='sigmoid')(x)
-            
-            self.model = keras.Model(inputs=inputs, outputs=outputs)
-            logger.info(f"Built MobileNetV2-LSTM model with input shape: {input_shape}")
-            
-            # Load weights from H5 file
-            self.model.load_weights(self.model_path)
             self.use_local = True
-            logger.info("Successfully loaded model weights")
+            
+            # Warmup
             self._warmup_model()
                 
         except Exception as e:
             logger.error(f"Failed to load local model: {e}")
+            import traceback
+            traceback.print_exc()
             self.use_local = False
     
     def _warmup_model(self):
@@ -176,10 +154,8 @@ class LocalModelInference:
         
         try:
             logger.info("Warming up model for GPU optimization...")
-            # Create dummy input
-            dummy_input = np.zeros((1, self.EXPECTED_FRAMES, *self.TARGET_SIZE, 3), dtype=np.float32)
             
-            # Run a few warmup inferences to let TensorFlow optimize
+            dummy_input = np.zeros((1, self.EXPECTED_FRAMES, 224, 224, 3), dtype=np.float32)
             for _ in range(3):
                 _ = self.model.predict(dummy_input, verbose=0)
             
@@ -189,14 +165,13 @@ class LocalModelInference:
             logger.warning(f"Model warmup failed: {e}")
     
     def preprocess_frames(self, frames: List[np.ndarray], target_size: tuple = None) -> np.ndarray:
-        """Preprocess frames for model input.
+        """
+        Preprocess raw BGR frames for model input.
         
-        MobileNetV2 expects:
-        - RGB color order (OpenCV gives BGR, must convert)
-        - Pixel values in [-1, 1] range (not [0, 1])
+        Input: List of BGR frames (OpenCV format)
+        Output: (1, EXPECTED_FRAMES, 224, 224, 3) - float32 RGB frames
         """
         target_size = target_size or self.TARGET_SIZE
-        processed = []
         
         # Ensure we have exactly EXPECTED_FRAMES frames
         if len(frames) < self.EXPECTED_FRAMES:
@@ -207,20 +182,22 @@ class LocalModelInference:
             indices = np.linspace(0, len(frames) - 1, self.EXPECTED_FRAMES, dtype=int)
             frames = [frames[i] for i in indices]
         
+        # Preprocess frames
+        processed = []
         for frame in frames:
             # Convert BGR (OpenCV default) to RGB
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             # Resize to 224x224
             resized = cv2.resize(rgb_frame, target_size, interpolation=cv2.INTER_AREA)
-            # MobileNetV2 preprocess: scale to [-1, 1]
-            # This matches tf.keras.applications.mobilenet_v2.preprocess_input
-            normalized = resized.astype(np.float32) / 127.5 - 1.0
-            processed.append(normalized)
+            # Convert to float32
+            img = resized.astype(np.float32)
+            processed.append(img)
         
-        # Stack frames and add batch dimension
-        # Shape: (1, num_frames, height, width, channels)
-        stacked = np.stack(processed, axis=0)
-        return np.expand_dims(stacked, axis=0)
+        # Stack frames: (EXPECTED_FRAMES, 224, 224, 3)
+        batch = np.stack(processed, axis=0)
+        
+        # Add batch dimension: (1, EXPECTED_FRAMES, 224, 224, 3)
+        return np.expand_dims(batch, axis=0)
     
     def predict(self, frames: List[np.ndarray]) -> Dict[str, float]:
         """
@@ -230,14 +207,13 @@ class LocalModelInference:
         if not self.use_local or self.model is None:
             raise RuntimeError("Local model not available")
         
-        # Preprocess
+        # Preprocess frames into model input format
         input_data = self.preprocess_frames(frames)
         
         # Run inference with optimized call
         start_time = time.time()
         
         # Use model() directly instead of model.predict() for faster GPU inference
-        # model.predict() adds overhead for batch processing we don't need
         if self._tf is not None:
             # Convert to tensor for faster GPU transfer
             input_tensor = self._tf.constant(input_data, dtype=self._tf.float32)
@@ -248,12 +224,13 @@ class LocalModelInference:
         
         inference_time = (time.time() - start_time) * 1000
         
-        # Parse output (assuming binary classification: [violence, non-violence])
+        # Parse output
         if predictions.shape[-1] == 2:
+            # Two outputs: [violence, non_violence]
             violence_score = float(predictions[0][0])
             non_violence_score = float(predictions[0][1])
         else:
-            # Single output (violence probability)
+            # Single output (violence probability via sigmoid)
             violence_score = float(predictions[0][0])
             non_violence_score = 1.0 - violence_score
         
@@ -311,8 +288,12 @@ class MLServiceInference:
             fd, temp_path = tempfile.mkstemp(suffix=".mp4")
             
             height, width = frames[0].shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')
             writer = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
+            if not writer.isOpened():
+                # Fallback for systems without H.264 support
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                writer = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
             
             for frame in frames:
                 writer.write(frame)

@@ -1,0 +1,10 @@
+TensorFlow version: 2.20.0
+==================================================
+SUCCESS! MobileNetV2+LSTM Model loaded
+==================================================
+Model type: MobileNetLSTMModel
+Model input shape: (None, 16, 224, 224, 3)
+Expected frames: 16
+Test prediction shape: (1, 1)
+Test prediction value: 0.0093
+Model inference test PASSED!

@@ -416,15 +416,31 @@ class EventRecorder:
             if mid_idx < len(all_frames):
                 success = cv2.imwrite(str(thumb_path), all_frames[mid_idx][0])
                 if success:
-                    # Store just the filename, not the path prefix
-                    event.thumbnail_path = thumb_filename
+                    # Store relative path from clips dir (including thumbnails/ subdirectory)
+                    event.thumbnail_path = f"thumbnails/{thumb_filename}"
                     logger.info(f"📸 Saved thumbnail: {thumb_filename}")
                 else:
                     logger.error(f"❌ Failed to save thumbnail: {thumb_path}")
             
-            # Write video using OpenCV with H.264 codec for better compatibility
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(str(clip_path), fourcc, STREAM_FPS, (width, height))
+            # Write video using H.264 codec for browser compatibility
+            # mp4v (MPEG-4 Part 2) is NOT playable in browsers — must use H.264
+            fourcc_h264 = cv2.VideoWriter_fourcc(*'avc1')
+            out = cv2.VideoWriter(str(clip_path), fourcc_h264, STREAM_FPS, (width, height))
+            
+            if not out.isOpened():
+                # Fallback: try other H.264 fourcc codes
+                for codec in ['H264', 'x264', 'X264']:
+                    fourcc_alt = cv2.VideoWriter_fourcc(*codec)
+                    out = cv2.VideoWriter(str(clip_path), fourcc_alt, STREAM_FPS, (width, height))
+                    if out.isOpened():
+                        logger.info(f"Using fallback H.264 codec: {codec}")
+                        break
+            
+            if not out.isOpened():
+                # Last resort: use mp4v (won't play in browsers but at least saves)
+                logger.warning("⚠️ H.264 codecs unavailable, falling back to mp4v (clips won't play in browser)")
+                fourcc_mp4v = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(str(clip_path), fourcc_mp4v, STREAM_FPS, (width, height))
             
             if not out.isOpened():
                 logger.error(f"❌ Failed to open VideoWriter for {clip_path}")
@@ -519,8 +535,13 @@ def broadcast_event_end(event: ViolenceEventState, clip_duration: float):
     }
     _broadcast_ws("violence_alert", alert)
     
-    # Store event in database for persistence
-    asyncio.create_task(store_event_async(alert))
+    # Store event in database for persistence (using run_coroutine_threadsafe since we're in a background thread)
+    global main_event_loop
+    if main_event_loop:
+        asyncio.run_coroutine_threadsafe(store_event_async(alert), main_event_loop)
+    else:
+        logger.warning("No main event loop available - falling back to sync storage")
+        store_event(alert)
 
 
 # In-memory event storage (kept for backward compatibility, but DB is primary)
@@ -787,9 +808,11 @@ class SimpleRTSPStream:
                     if current_frame is not None:
                         self.event_recorder.on_prediction(raw_score, current_frame, time.time())
                     
-                    # Only emit alert if consecutive detections threshold met
-                    if self._consecutive_high_count >= CONSECUTIVE_DETECTIONS_REQUIRED:
-                        self._maybe_emit_violence_alert(result)
+                    # NOTE: Per-frame violence_alert emission removed.
+                    # The EventRecorder handles the alert lifecycle properly:
+                    #   - broadcast_event_start() when violence begins (one alert)
+                    #   - broadcast_event_end() when clip is saved (one alert)
+                    # _maybe_emit_violence_alert was causing repeated alerts every 5s.
                         
             except Exception as e:
                 logger.error(f"Inference error: {e}")

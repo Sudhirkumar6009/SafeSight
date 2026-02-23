@@ -89,8 +89,8 @@ async def startup_event():
 # ============== Pydantic Models ==============
 
 class ModelLoadRequest(BaseModel):
-    modelPath: str = Field(..., description="Path to the .pth model file")
-    architecture: str = Field(default="videomae", description="Model architecture")
+    modelPath: str = Field(..., description="Path to the model file (.h5, .pth)")
+    architecture: str = Field(default="keras-cnn", description="Model architecture")
 
 
 class InferenceRequest(BaseModel):
@@ -202,7 +202,7 @@ async def predict(request: InferenceRequest):
     - **videoPath**: Path to the video file (mp4, avi, mov)
     - **modelPath**: Optional path to load a different model
     - **architecture**: Model architecture if loading new model
-    - **numFrames**: Number of frames to process (default: 16)
+    - **numFrames**: Number of frames to process (default: 20)
     """
     try:
         # Validate video path
@@ -239,7 +239,7 @@ async def predict_upload(
     Use this endpoint when sending video files from remote services.
     
     - **video**: Video file (mp4, avi, mov)
-    - **numFrames**: Number of frames to process (default: 16)
+    - **numFrames**: Number of frames to process (default: 20)
     """
     temp_path = None
     try:

@@ -130,8 +130,11 @@ class InferencePipeline:
         try:
             # Write frames to temp video
             height, width = frame_packets[0].shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')
             writer = cv2.VideoWriter(temp_path, fourcc, 15, (width, height))
+            if not writer.isOpened():
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                writer = cv2.VideoWriter(temp_path, fourcc, 15, (width, height))
             
             for packet in frame_packets:
                 writer.write(packet.frame)

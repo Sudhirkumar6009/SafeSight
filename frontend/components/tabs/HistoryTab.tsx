@@ -13,6 +13,8 @@ import {
   Loader2,
   Radio,
   Play,
+  Pause,
+  X,
   AlertTriangle,
   CheckCircle,
   XCircle,
@@ -83,6 +85,10 @@ export default function HistoryTab({ onTabChange }: HistoryTabProps) {
   );
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [playingClip, setPlayingClip] = useState<string | null>(null);
+  const [videoModal, setVideoModal] = useState<{
+    url: string;
+    title: string;
+  } | null>(null);
   const [newEventFlash, setNewEventFlash] = useState(false);
   const [updatingEventId, setUpdatingEventId] = useState<
     string | number | null
@@ -345,7 +351,7 @@ export default function HistoryTab({ onTabChange }: HistoryTabProps) {
                 {streamEvents.map((event, index) => {
                   const severity =
                     severityColors[event.severity] || severityColors.low;
-                  const isPlaying = playingClip === event.id;
+                  const isPlaying = playingClip === String(event.id);
 
                   return (
                     <motion.div
@@ -365,15 +371,7 @@ export default function HistoryTab({ onTabChange }: HistoryTabProps) {
                       <div className="flex gap-4 p-4">
                         {/* Thumbnail / Video Player */}
                         <div className="flex-shrink-0 w-48 h-28 bg-slate-800 rounded-lg overflow-hidden relative group">
-                          {isPlaying && event.clip_path ? (
-                            <video
-                              src={getClipUrl(event.clip_path)}
-                              className="w-full h-full object-cover"
-                              controls
-                              autoPlay
-                              onEnded={() => setPlayingClip(null)}
-                            />
-                          ) : event.thumbnail_path ? (
+                          {event.thumbnail_path ? (
                             <>
                               <img
                                 src={getThumbnailUrl(event.thumbnail_path)}
@@ -384,7 +382,12 @@ export default function HistoryTab({ onTabChange }: HistoryTabProps) {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setPlayingClip(event.id);
+                                    setVideoModal({
+                                      url: getClipUrl(event.clip_path!),
+                                      title:
+                                        event.stream_name ||
+                                        `Event #${event.id}`,
+                                    });
                                   }}
                                   className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity"
                                 >
@@ -398,7 +401,11 @@ export default function HistoryTab({ onTabChange }: HistoryTabProps) {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setPlayingClip(event.id);
+                                setVideoModal({
+                                  url: getClipUrl(event.clip_path!),
+                                  title:
+                                    event.stream_name || `Event #${event.id}`,
+                                });
                               }}
                               className="w-full h-full flex flex-col items-center justify-center text-slate-500 hover:text-white transition-colors"
                             >
@@ -748,6 +755,40 @@ export default function HistoryTab({ onTabChange }: HistoryTabProps) {
           </div>
         )}
       </div>
+
+      {/* Full-screen Video Player Modal */}
+      {videoModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm"
+          onClick={() => setVideoModal(null)}
+        >
+          <div
+            className="relative w-full max-w-4xl mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-white font-semibold truncate">
+                {videoModal.title}
+              </span>
+              <button
+                onClick={() => setVideoModal(null)}
+                className="ml-4 p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {/* Video */}
+            <video
+              src={videoModal.url}
+              className="w-full rounded-xl bg-black max-h-[75vh]"
+              controls
+              autoPlay
+              onEnded={() => setVideoModal(null)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Event Detail Modal */}
       <EventDetailModal

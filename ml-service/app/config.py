@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     model_architecture: str = "keras-cnn"
     
     # Inference settings
-    num_frames: int = 16
+    num_frames: int = 16  # MobileNetV2-LSTM model expects 16 frames
     frame_size: int = 224
     batch_size: int = 1
     

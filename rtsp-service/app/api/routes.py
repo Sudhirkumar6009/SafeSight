@@ -621,10 +621,15 @@ async def get_clip(filename: str, request: Request):
     )
 
 
-@router.get("/thumbnails/{filename}")
+@router.get("/thumbnails/{filename:path}")
 async def get_thumbnail(filename: str):
     """Get event thumbnail."""
     thumb_path = Path(settings.clips_dir) / filename
+    
+    if not thumb_path.exists():
+        # Fallback: check in thumbnails subdirectory if filename doesn't include it
+        if not filename.startswith("thumbnails/"):
+            thumb_path = Path(settings.clips_dir) / "thumbnails" / filename
     
     if not thumb_path.exists():
         raise HTTPException(status_code=404, detail="Thumbnail not found")
@@ -632,14 +637,19 @@ async def get_thumbnail(filename: str):
     return FileResponse(
         path=str(thumb_path),
         media_type="image/jpeg",
-        filename=filename
+        filename=Path(filename).name  # Use just the filename for Content-Disposition
     )
 
 
-@router.get("/person-images/{filename}")
+@router.get("/person-images/{filename:path}")
 async def get_person_image(filename: str):
     """Get captured person image from a violence event."""
     image_path = Path(settings.clips_dir) / filename
+    
+    if not image_path.exists():
+        # Fallback: check in face_participants subdirectory
+        if not filename.startswith("face_participants/"):
+            image_path = Path(settings.clips_dir) / "face_participants" / filename
     
     if not image_path.exists():
         raise HTTPException(status_code=404, detail="Person image not found")
@@ -647,7 +657,7 @@ async def get_person_image(filename: str):
     return FileResponse(
         path=str(image_path),
         media_type="image/jpeg",
-        filename=filename
+        filename=Path(filename).name
     )
 
 

@@ -34,9 +34,10 @@ logger.add(sys.stderr, level="INFO", format="<green>{time:HH:mm:ss}</green> | <l
 
 # ============== Model Configuration ==============
 MODEL_PATH = Path(__file__).parent / ".." / "ml-service" / "models" / "violence_model_legacy.h5"
-EXPECTED_FRAMES = 16
+EXPECTED_FRAMES = 20  # Model expects 20 frames (based on saved model config)
 TARGET_SIZE = (224, 224)
-INFERENCE_INTERVAL = 0.2  # Run inference every 0.5 seconds
+VGG16_OUTPUT_SHAPE = (7, 7, 512)  # VGG16 conv5 output shape for 224x224 input
+INFERENCE_INTERVAL = 0.2  # Run inference every 0.2 seconds
 VIOLENCE_THRESHOLD = float(os.getenv("VIOLENCE_THRESHOLD", "0.50"))  # 50% for is_violent flag
 VIOLENCE_ALERT_THRESHOLD = float(os.getenv("VIOLENCE_ALERT_THRESHOLD", "0.90"))  # Alert at 90%+ (instant notification)
 VIOLENCE_ALERT_COOLDOWN = float(os.getenv("VIOLENCE_ALERT_COOLDOWN", "5.0"))  # 5 second cooldown between alerts
@@ -45,16 +46,27 @@ VIOLENCE_ALERT_COOLDOWN = float(os.getenv("VIOLENCE_ALERT_COOLDOWN", "5.0"))  # 
 # ============== Violence Detection Model ==============
 
 class ViolenceDetector:
-    """Loads and runs the violence detection model."""
+    """
+    Loads and runs the violence detection model.
+    
+    The model architecture expects VGG16 pre-extracted features:
+    - Input: (batch, 20 frames, 7, 7, 512) - VGG16 conv5 block features
+    - TimeDistributed(Flatten): (batch, 20, 25088)
+    - LSTM(256): (batch, 256)
+    - Dense(1, sigmoid): violence probability
+    
+    VGG16 is used as a separate feature extractor.
+    """
     
     def __init__(self):
         self.model = None
+        self.feature_extractor = None
         self.is_loaded = False
         self._lock = threading.Lock()
         self._load_model()
     
     def _load_model(self):
-        """Load the TensorFlow model."""
+        """Load the TensorFlow model and VGG16 feature extractor."""
         try:
             model_path = MODEL_PATH.resolve()
             if not model_path.exists():
@@ -62,70 +74,71 @@ class ViolenceDetector:
                 return
             
             import tensorflow as tf
+            from tensorflow import keras
+            from tensorflow.keras import layers
+            from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input
             
             # Suppress TF warnings
             tf.get_logger().setLevel('ERROR')
             
-            # Try direct load first
-            try:
-                self.model = tf.keras.models.load_model(str(model_path), compile=False)
-                self.is_loaded = True
-                logger.info(f"✅ Loaded violence detection model from {model_path}")
-                return
-            except Exception as e:
-                logger.warning(f"Direct load failed: {str(e)[:80]}, trying fallback...")
-            
-            # Fallback: Build architecture and load weights
-            from tensorflow import keras
-            from tensorflow.keras import layers
-            
-            input_shape = (EXPECTED_FRAMES, *TARGET_SIZE, 3)
-            inputs = keras.Input(shape=input_shape)
-            
-            base_model = keras.applications.MobileNetV2(
-                weights=None, include_top=False, input_shape=(224, 224, 3)
+            # 1. Load VGG16 as feature extractor (pre-trained on ImageNet)
+            logger.info("Loading VGG16 feature extractor...")
+            vgg16_base = VGG16(
+                weights='imagenet',
+                include_top=False,
+                input_shape=(224, 224, 3)
             )
+            vgg16_base.trainable = False  # Freeze weights
+            self.feature_extractor = vgg16_base
+            logger.info(f"✅ VGG16 loaded, output shape: {vgg16_base.output_shape}")
             
-            x = layers.TimeDistributed(base_model)(inputs)
-            x = layers.TimeDistributed(layers.GlobalAveragePooling2D())(x)
-            x = layers.LSTM(64)(x)
-            x = layers.Dense(64, activation='relu')(x)
+            # 2. Build the LSTM model architecture matching the saved weights
+            # The saved model expects input: (batch, 20, 7, 7, 512)
+            logger.info("Building LSTM classifier model...")
+            lstm_input = keras.Input(shape=(EXPECTED_FRAMES, *VGG16_OUTPUT_SHAPE))
+            x = layers.TimeDistributed(layers.Flatten())(lstm_input)
+            x = layers.LSTM(256)(x)
             outputs = layers.Dense(1, activation='sigmoid')(x)
             
-            self.model = keras.Model(inputs=inputs, outputs=outputs)
+            self.model = keras.Model(inputs=lstm_input, outputs=outputs)
+            
+            # 3. Load weights from the H5 file
+            logger.info(f"Loading LSTM weights from {model_path}...")
             self.model.load_weights(str(model_path))
             self.is_loaded = True
-            logger.info(f"✅ Loaded model weights from {model_path}")
+            logger.info(f"✅ Loaded violence detection model weights")
             
-            # Warmup
-            dummy = np.zeros((1, EXPECTED_FRAMES, *TARGET_SIZE, 3), dtype=np.float32)
-            self.model.predict(dummy, verbose=0)
+            # 4. Warmup both models
+            logger.info("Warming up models...")
+            dummy_frame = np.zeros((1, 224, 224, 3), dtype=np.float32)
+            _ = self.feature_extractor.predict(dummy_frame, verbose=0)
+            
+            dummy_features = np.zeros((1, EXPECTED_FRAMES, *VGG16_OUTPUT_SHAPE), dtype=np.float32)
+            _ = self.model.predict(dummy_features, verbose=0)
             logger.info("✅ Model warmup complete")
             
         except Exception as e:
             logger.error(f"❌ Failed to load model: {e}")
+            import traceback
+            traceback.print_exc()
             self.is_loaded = False
     
     def predict(self, frames: List[np.ndarray]) -> Optional[dict]:
         """Run prediction on frames."""
-        if not self.is_loaded or self.model is None:
+        if not self.is_loaded or self.model is None or self.feature_extractor is None:
             return None
         
         with self._lock:
             try:
-                # Preprocess frames
-                processed = self._preprocess(frames)
+                # Extract VGG16 features from frames
+                features = self._extract_features(frames)
                 
-                # Run inference
+                # Run LSTM inference
                 start = time.time()
-                prediction = self.model.predict(processed, verbose=0)
+                prediction = self.model.predict(features, verbose=0)
                 inference_time = (time.time() - start) * 1000
                 
-                # Parse result
-                if prediction.shape[-1] == 2:
-                    violence_score = float(prediction[0][0])
-                else:
-                    violence_score = float(prediction[0][0])
+                violence_score = float(prediction[0][0])
                 
                 return {
                     "violence_score": violence_score,
@@ -136,25 +149,48 @@ class ViolenceDetector:
                 }
             except Exception as e:
                 logger.error(f"Prediction error: {e}")
+                import traceback
+                traceback.print_exc()
                 return None
     
-    def _preprocess(self, frames: List[np.ndarray]) -> np.ndarray:
-        """Preprocess frames for model input."""
-        # Ensure we have exactly EXPECTED_FRAMES
+    def _extract_features(self, frames: List[np.ndarray]) -> np.ndarray:
+        """
+        Extract VGG16 features from frames.
+        
+        Input: List of BGR frames (OpenCV format)
+        Output: (1, num_frames, 7, 7, 512) - VGG16 conv5 features
+        """
+        from tensorflow.keras.applications.vgg16 import preprocess_input
+        
+        # Ensure we have exactly EXPECTED_FRAMES frames
         if len(frames) < EXPECTED_FRAMES:
             frames = list(frames) + [frames[-1]] * (EXPECTED_FRAMES - len(frames))
         elif len(frames) > EXPECTED_FRAMES:
             indices = np.linspace(0, len(frames) - 1, EXPECTED_FRAMES, dtype=int)
             frames = [frames[i] for i in indices]
         
+        # Preprocess frames for VGG16
         processed = []
         for frame in frames:
-            resized = cv2.resize(frame, TARGET_SIZE, interpolation=cv2.INTER_AREA)
-            normalized = resized.astype(np.float32) / 255.0
-            processed.append(normalized)
+            # Convert BGR (OpenCV) to RGB
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Resize to 224x224
+            resized = cv2.resize(rgb_frame, TARGET_SIZE, interpolation=cv2.INTER_AREA)
+            # Convert to float
+            img = resized.astype(np.float32)
+            processed.append(img)
         
-        stacked = np.stack(processed, axis=0)
-        return np.expand_dims(stacked, axis=0)
+        # Stack frames: (num_frames, 224, 224, 3)
+        batch = np.stack(processed, axis=0)
+        
+        # Apply VGG16 preprocessing (subtracts ImageNet mean, BGR conversion handled internally)
+        batch = preprocess_input(batch)
+        
+        # Extract features: (num_frames, 7, 7, 512)
+        features = self.feature_extractor.predict(batch, verbose=0)
+        
+        # Add batch dimension: (1, num_frames, 7, 7, 512)
+        return np.expand_dims(features, axis=0)
 
 
 # Global detector instance

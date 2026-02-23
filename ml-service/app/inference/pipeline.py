@@ -84,15 +84,15 @@ class InferencePipeline:
             
             # Run inference using model manager (handles both PyTorch and Keras)
             if self.model_manager.model_type == "keras":
-                # Keras model needs different preprocessing than PyTorch
-                # MobileNetV2 expects pixels in [-1, 1], not ImageNet normalized
-                # Re-preprocess from raw frames for Keras
-                keras_input = frames.astype(np.float32) / 127.5 - 1.0  # (T, H, W, C) scaled to [-1, 1]
-                input_data = np.expand_dims(keras_input, axis=0)  # (1, T, H, W, C)
+                # VGG16-LSTM model expects raw RGB frames (uint8 or float32 0-255)
+                # The VGG16LSTMModel wrapper handles VGG16 preprocessing internally
+                # Input shape: (batch, num_frames, 224, 224, 3)
+                input_data = frames.astype(np.float32)  # (T, H, W, C) as float32
+                input_data = np.expand_dims(input_data, axis=0)  # (1, T, H, W, C)
                 
                 logger.info(f"Keras input shape: {input_data.shape}")
                 
-                # Run prediction
+                # Run prediction - VGG16LSTMModel handles feature extraction
                 try:
                     logits = self.model_manager.model.predict(input_data, verbose=0)
                     logger.info(f"Keras output shape: {logits.shape}, values: {logits}")

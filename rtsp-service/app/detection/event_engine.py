@@ -31,6 +31,34 @@ from app.db import (
 )
 from app.stream.ffmpeg_ingestion import FFmpegIngestion, FramePacket, ClipRecorder
 
+# Simple per-stream debounce state
+_debounce_state = {}  # {stream_id: {"high_count": int}}
+
+MIN_CONSECUTIVE_FRAMES = 8
+MAX_MOTION_SCORE = 0.25  # ignore if scene motion above this
+
+def _process_frame_for_event(stream_id, frame, violence_score, detect_fn, *args, **kwargs):
+    state = _debounce_state.setdefault(stream_id, {"high_count": 0})
+    # TODO: Implement motion analysis or import from correct module
+    motion = 0.0  # Placeholder: implement motion detection
+
+    # If large scene motion (camera move/scene change), reset and skip
+    if motion is None or motion > MAX_MOTION_SCORE:
+        state["high_count"] = 0
+        return None
+
+    if violence_score >= detect_fn.threshold:  # or use configured threshold
+        state["high_count"] += 1
+    else:
+        state["high_count"] = 0
+
+    # Require sustained high scores before triggering
+    if state["high_count"] >= MIN_CONSECUTIVE_FRAMES:
+        state["high_count"] = 0  # reset after trigger
+        return detect_fn.trigger_event(stream_id, frame, violence_score, *args, **kwargs)
+
+    return None
+
 
 @dataclass
 class InferenceScore:

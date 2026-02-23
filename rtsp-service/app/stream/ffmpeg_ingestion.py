@@ -500,9 +500,17 @@ class ClipRecorder:
             # Get frame dimensions from first frame
             height, width = frames[0].shape[:2]
             
-            # Initialize video writer
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            # Use H.264 codec for browser compatibility
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')
             writer = cv2.VideoWriter(str(clip_path), fourcc, fps, (width, height))
+            
+            # Fallback to other H.264 codecs if avc1 fails
+            if not writer.isOpened():
+                for codec in ['H264', 'x264', 'mp4v']:
+                    fourcc = cv2.VideoWriter_fourcc(*codec)
+                    writer = cv2.VideoWriter(str(clip_path), fourcc, fps, (width, height))
+                    if writer.isOpened():
+                        break
             
             for packet in frames:
                 writer.write(packet.frame)
