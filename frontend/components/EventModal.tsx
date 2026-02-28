@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Event Modal Component
+ * SafeSight - Event Modal Component
  * =====================================
  * Modal for viewing event details with video clip playback.
  */
@@ -153,11 +153,10 @@ export function EventModal({
                 <button
                   onClick={() => setActiveTab("details")}
                   className={`flex-1 px-4 py-3 text-sm font-medium transition-colors
-                  ${
-                    activeTab === "details"
+                  ${activeTab === "details"
                       ? "text-white border-b-2 border-blue-500"
                       : "text-gray-400 hover:text-gray-300"
-                  }`}
+                    }`}
                 >
                   Details
                 </button>
@@ -165,11 +164,10 @@ export function EventModal({
                   <button
                     onClick={() => setActiveTab("clip")}
                     className={`flex-1 px-4 py-3 text-sm font-medium transition-colors
-                    ${
-                      activeTab === "clip"
+                    ${activeTab === "clip"
                         ? "text-white border-b-2 border-blue-500"
                         : "text-gray-400 hover:text-gray-300"
-                    }`}
+                      }`}
                   >
                     Video Clip
                   </button>

@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Event Detail Modal
+ * SafeSight - Event Detail Modal
  * ===================================
  * Full-detail modal for violence events showing clip, person captures,
  * confidence stats, and action buttons.

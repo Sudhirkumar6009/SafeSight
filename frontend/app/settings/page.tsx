@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Settings Page
+ * SafeSight - Settings Page
  * =============================
  * Configure system settings and detection thresholds.
  */

@@ -189,8 +189,9 @@ class LocalModelInference:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             # Resize to 224x224
             resized = cv2.resize(rgb_frame, target_size, interpolation=cv2.INTER_AREA)
-            # Convert to float32
-            img = resized.astype(np.float32)
+            # Convert to float32 and normalize to [0, 1]
+            # The model was trained with rescale=1./255 normalization
+            img = resized.astype(np.float32) / 255.0
             processed.append(img)
         
         # Stack frames: (EXPECTED_FRAMES, 224, 224, 3)

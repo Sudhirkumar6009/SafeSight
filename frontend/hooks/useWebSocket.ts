@@ -157,7 +157,7 @@ class WebSocketManagerClass {
           }
         };
 
-        ws.onerror = () => {};
+        ws.onerror = () => { };
       } catch (error) {
         this.connectPromise = null;
         console.error("[WS] Connection error:", error);
@@ -189,18 +189,18 @@ class WebSocketManagerClass {
     ) {
       console.log(
         "[WS] Reconnecting in " +
-          Math.round(delay / 1000) +
-          "s (attempt " +
-          this.reconnectAttempts +
-          "/" +
-          MAX_RECONNECT_ATTEMPTS +
-          ")...",
+        Math.round(delay / 1000) +
+        "s (attempt " +
+        this.reconnectAttempts +
+        "/" +
+        MAX_RECONNECT_ATTEMPTS +
+        ")...",
       );
     }
 
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
-      this.connect().catch(() => {});
+      this.connect().catch(() => { });
     }, delay);
   }
 
@@ -273,7 +273,7 @@ class WebSocketManagerClass {
           console.error("[WS] Handler error:", e);
         }
       });
-    } catch (error) {}
+    } catch (error) { }
   }
 }
 
@@ -371,7 +371,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
     manager.addHandler(handler);
     const connectTimeout = setTimeout(() => {
-      manager.connect().catch(() => {});
+      manager.connect().catch(() => { });
     }, 100); // 100ms delay survives Strict Mode unmount/remount cycle
 
     return () => {

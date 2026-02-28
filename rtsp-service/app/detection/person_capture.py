@@ -1,5 +1,5 @@
 """
-ViolenceSense - Person Capture Module
+SafeSight - Person Capture Module
 ======================================
 Detects and crops individual persons from violence event frames
 using OpenCV's HOG person detector + Haar Cascade face detector.

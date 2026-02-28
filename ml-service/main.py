@@ -1,5 +1,5 @@
 """
-ViolenceSense ML Service - FastAPI Application
+SafeSight ML Service - FastAPI Application
 
 This is the main entry point for the ML inference service.
 Provides REST API endpoints for model management and video inference.
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Create FastAPI application
 app = FastAPI(
-    title="ViolenceSense ML Service",
+    title="SafeSight ML Service",
     description="AI-powered video violence detection inference service",
     version="1.0.0",
     docs_url="/docs",
@@ -119,7 +119,7 @@ async def health_check():
     """Check service health status."""
     return {
         "status": "healthy",
-        "message": "ViolenceSense ML Service is running"
+        "message": "SafeSight ML Service is running"
     }
 
 
@@ -127,7 +127,7 @@ async def health_check():
 async def root():
     """Root endpoint with service info."""
     return {
-        "service": "ViolenceSense ML Service",
+        "service": "SafeSight ML Service",
         "version": "1.0.0",
         "status": "running",
         "endpoints": {
@@ -315,7 +315,7 @@ if __name__ == "__main__":
     logger.info(f"""
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
-║   🧠 ViolenceSense ML Service                             ║
+║   🧠 SafeSight ML Service                                 ║
 ║                                                           ║
 ║   Starting inference service...                           ║
 ║   Host: {settings.host}                                   ║

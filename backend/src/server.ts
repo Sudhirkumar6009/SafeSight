@@ -133,7 +133,7 @@ class Server {
     this.app.get("/", (req, res) => {
       res.json({
         success: true,
-        message: "ViolenceSense API Server",
+        message: "SafeSight API Server",
         version: "1.0.0",
         documentation: `${config.api.prefix}/${config.api.version}/health`,
         endpoints: {
@@ -239,7 +239,7 @@ class Server {
         logger.info(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
-║   🎬 ViolenceSense API Server                             ║
+║   🎬 SafeSight API Server                                 ║
 ║                                                           ║
 ║   Status:      Running                                    ║
 ║   Environment: ${config.nodeEnv.padEnd(20)}                ║

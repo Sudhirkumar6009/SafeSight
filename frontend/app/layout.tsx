@@ -6,7 +6,7 @@ import { Providers } from "./providers";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ViolenceSense - AI Video Violence Detection",
+  title: "SafeSight - AI Video Violence Detection",
   description: "AI-powered video violence detection using deep learning",
   keywords: [
     "violence detection",

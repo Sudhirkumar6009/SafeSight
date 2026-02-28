@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Stream Form Component
+ * SafeSight - Stream Form Component
  * =====================================
  * Form for adding or editing RTSP streams.
  */

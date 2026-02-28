@@ -304,7 +304,13 @@ class EventDetector:
                     alert_frames.append(f)
             
             alert_frames.sort(key=lambda f: f.frame_number)
-            alert_duration = len(alert_frames) / 15.0
+            
+            # Calculate real duration from timestamps
+            if len(alert_frames) >= 2:
+                elapsed = (alert_frames[-1].timestamp - alert_frames[0].timestamp).total_seconds()
+                alert_duration = elapsed if elapsed > 0 else len(alert_frames) / 30.0
+            else:
+                alert_duration = len(alert_frames) / 30.0
             
             logger.info(
                 f"📹 Alert clip: {len(alert_frames)} frames (~{alert_duration:.1f}s) "
@@ -426,7 +432,12 @@ class EventDetector:
                 logger.warning("No frames available for high-conf clip")
                 return
             
-            clip_duration = len(all_frames) / 15.0  # Approximate at 15fps
+            # Calculate duration from timestamps
+            if len(all_frames) >= 2:
+                elapsed = (all_frames[-1].timestamp - all_frames[0].timestamp).total_seconds()
+                clip_duration = elapsed if elapsed > 0 else len(all_frames) / 30.0
+            else:
+                clip_duration = len(all_frames) / 30.0
             expected_duration = self.full_clip_before + violence_duration + self.full_clip_after
             
             logger.info(
@@ -552,7 +563,13 @@ class EventDetector:
                 all_frames.append(f)
         
         all_frames.sort(key=lambda f: f.frame_number)
-        full_clip_duration = len(all_frames) / 15.0
+        
+        # Calculate duration from timestamps
+        if len(all_frames) >= 2:
+            elapsed = (all_frames[-1].timestamp - all_frames[0].timestamp).total_seconds()
+            full_clip_duration = elapsed if elapsed > 0 else len(all_frames) / 30.0
+        else:
+            full_clip_duration = len(all_frames) / 30.0
         
         logger.info(
             f"📹 Full evidence clip: {len(pre_frames)} pre + {len(post_frames)} post "

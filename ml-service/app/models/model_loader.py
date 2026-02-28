@@ -1,5 +1,5 @@
 """
-ViolenceSense ML Service - Model Loading and Management
+SafeSight ML Service - Model Loading and Management
 
 This module handles loading and managing PyTorch and Keras models for violence detection.
 Supports various architectures including VideoMAE, TimeSformer, SlowFast, etc.

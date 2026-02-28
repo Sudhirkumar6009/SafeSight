@@ -193,7 +193,7 @@ export default function Home() {
               <div className="absolute inset-0 bg-cyan-500/10 blur-3xl rounded-full" />
               <img
                 src="/assets/landing_demo.png"
-                alt="ViolenceSense - Real-time Violence Detection System"
+                alt="SafeSight - Real-time Violence Detection System"
                 className="relative w-full h-auto max-h-[700px] object-contain rounded-2xl shadow-2xl"
               />
             </div>
@@ -345,7 +345,7 @@ export default function Home() {
                   <Shield className="w-5 h-5 text-cyan-400" />
                 </div>
                 <span className="text-xl font-bold text-white">
-                  ViolenceSense
+                  SafeSight
                 </span>
               </div>
               <p className="text-gray-500 max-w-sm leading-relaxed">
@@ -428,7 +428,7 @@ export default function Home() {
           {/* Bottom Bar */}
           <div className="pt-8 border-t border-gray-900 flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-gray-600 text-sm">
-              2025 ViolenceSense. All rights reserved.
+              2025 SafeSight. All rights reserved.
             </p>
             <div className="flex items-center gap-4">
               <a

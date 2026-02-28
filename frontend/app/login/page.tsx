@@ -69,7 +69,7 @@ export default function LoginPage() {
               <Shield className="w-6 h-6 text-cyan-400" />
             </div>
             <span className="text-2xl font-bold text-white">
-              Violence<span className="text-cyan-400">Sense</span>
+              Safe<span className="text-cyan-400">Sight</span>
             </span>
           </Link>
           <p className="text-gray-400">Sign in to your account</p>

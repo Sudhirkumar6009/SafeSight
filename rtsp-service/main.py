@@ -60,14 +60,14 @@ PREDICTION_SMOOTHING_WINDOW = int(os.getenv("PREDICTION_SMOOTHING_WINDOW", "3"))
 CONSECUTIVE_DETECTIONS_REQUIRED = int(os.getenv("CONSECUTIVE_DETECTIONS_REQUIRED", "2"))  # N consecutive high scores to trigger alert
 
 # Clip recording settings
-CLIP_BUFFER_SECONDS = int(os.getenv("CLIP_BUFFER_SECONDS", "5"))  # 10s before violence
-CLIP_AFTER_SECONDS = int(os.getenv("CLIP_AFTER_SECONDS", "5"))  # 10s after violence ends
+CLIP_BUFFER_SECONDS = int(os.getenv("CLIP_BUFFER_SECONDS", "10"))  # 10s before violence
+CLIP_AFTER_SECONDS = int(os.getenv("CLIP_AFTER_SECONDS", "10"))  # 10s after violence ends
 CLIP_MAX_DURATION = int(os.getenv("CLIP_MAX_DURATION", "60"))  # Max 60s violence duration before force-save
 CLIPS_DIR = Path(os.getenv("CLIPS_DIR", "./clips"))
 CLIPS_DIR.mkdir(exist_ok=True)
 THUMBNAILS_DIR = CLIPS_DIR / "thumbnails"
 THUMBNAILS_DIR.mkdir(exist_ok=True)
-STREAM_FPS = 30  # Assumed FPS for clip recording
+STREAM_FPS = 30  # Default FPS for clip recording (overridden by actual measured FPS)
 
 
 # ============== Helper Functions ==============
@@ -375,7 +375,7 @@ class EventRecorder:
         self.violence_start_time = None
     
     def _save_clip(self, event: ViolenceEventState):
-        """Save video clip from collected frames."""
+        """Save video clip from collected frames with correct real-time playback speed."""
         try:
             # Combine all frames: pre-buffer + event + post-buffer
             all_frames = []
@@ -390,6 +390,19 @@ class EventRecorder:
             if not all_frames:
                 logger.warning(f"❌ No frames to save for event {event.event_id}")
                 return
+            
+            # Calculate actual FPS from frame timestamps for real-time playback
+            # This prevents the fast-forwarded effect caused by using a hardcoded FPS
+            actual_fps = STREAM_FPS  # default fallback
+            if len(all_frames) >= 2:
+                first_ts = all_frames[0][1]
+                last_ts = all_frames[-1][1]
+                elapsed = last_ts - first_ts
+                if elapsed > 0:
+                    actual_fps = len(all_frames) / elapsed
+                    # Clamp to reasonable range (5-60 fps)
+                    actual_fps = max(5.0, min(60.0, actual_fps))
+                    logger.info(f"📊 Measured actual FPS: {actual_fps:.1f} (from {len(all_frames)} frames over {elapsed:.1f}s)")
             
             # Get frame dimensions from first frame
             first_frame = all_frames[0][0]
@@ -422,16 +435,18 @@ class EventRecorder:
                 else:
                     logger.error(f"❌ Failed to save thumbnail: {thumb_path}")
             
+            # Use the measured actual FPS for the video writer so playback is real-time
+            write_fps = int(round(actual_fps))
+            
             # Write video using H.264 codec for browser compatibility
-            # mp4v (MPEG-4 Part 2) is NOT playable in browsers — must use H.264
             fourcc_h264 = cv2.VideoWriter_fourcc(*'avc1')
-            out = cv2.VideoWriter(str(clip_path), fourcc_h264, STREAM_FPS, (width, height))
+            out = cv2.VideoWriter(str(clip_path), fourcc_h264, write_fps, (width, height))
             
             if not out.isOpened():
                 # Fallback: try other H.264 fourcc codes
                 for codec in ['H264', 'x264', 'X264']:
                     fourcc_alt = cv2.VideoWriter_fourcc(*codec)
-                    out = cv2.VideoWriter(str(clip_path), fourcc_alt, STREAM_FPS, (width, height))
+                    out = cv2.VideoWriter(str(clip_path), fourcc_alt, write_fps, (width, height))
                     if out.isOpened():
                         logger.info(f"Using fallback H.264 codec: {codec}")
                         break
@@ -440,7 +455,7 @@ class EventRecorder:
                 # Last resort: use mp4v (won't play in browsers but at least saves)
                 logger.warning("⚠️ H.264 codecs unavailable, falling back to mp4v (clips won't play in browser)")
                 fourcc_mp4v = cv2.VideoWriter_fourcc(*'mp4v')
-                out = cv2.VideoWriter(str(clip_path), fourcc_mp4v, STREAM_FPS, (width, height))
+                out = cv2.VideoWriter(str(clip_path), fourcc_mp4v, write_fps, (width, height))
             
             if not out.isOpened():
                 logger.error(f"❌ Failed to open VideoWriter for {clip_path}")
@@ -463,8 +478,8 @@ class EventRecorder:
                 logger.error(f"❌ Clip file too small ({file_size} bytes): {clip_path}")
                 return
             
-            # Calculate duration
-            clip_duration = len(all_frames) / STREAM_FPS
+            # Calculate real duration from timestamps
+            clip_duration = len(all_frames) / actual_fps
             event.clip_path = clip_filename
             
             logger.info(f"✅ Saved clip: {clip_filename} ({clip_duration:.1f}s, {frames_written} frames, {file_size/1024:.1f}KB)")

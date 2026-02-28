@@ -13,7 +13,7 @@ const logFormat = winston.format.combine(
 const logger = winston.createLogger({
   level: config.logging.level,
   format: logFormat,
-  defaultMeta: { service: "violencesense-api" },
+  defaultMeta: { service: "safesight-api" },
   transports: [
     new winston.transports.Console({
       format: winston.format.combine(winston.format.colorize(), logFormat),

@@ -220,16 +220,15 @@ interface DashboardSidebarProps {
 
 export function DashboardSidebar({
   activeTab = "dashboard",
-  onTabChange = () => {},
+  onTabChange = () => { },
 }: DashboardSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const { user, logout } = useAuth();
 
   return (
     <aside
-      className={`fixed left-0 top-0 h-screen flex flex-col transition-all duration-300 z-40 ${
-        collapsed ? "w-20" : "w-64"
-      } bg-slate-950 border-r border-slate-800`}
+      className={`fixed left-0 top-0 h-screen flex flex-col transition-all duration-300 z-40 ${collapsed ? "w-20" : "w-64"
+        } bg-slate-950 border-r border-slate-800`}
     >
       {/* Logo */}
       <div className="p-4 border-b border-slate-800">
@@ -246,7 +245,7 @@ export function DashboardSidebar({
           {!collapsed && (
             <div>
               <span className="text-xl font-bold text-white">
-                Violence<span className="text-cyan-400">Sense</span>
+                Safe<span className="text-cyan-400">Sight</span>
               </span>
             </div>
           )}
@@ -262,13 +261,11 @@ export function DashboardSidebar({
             <button
               key={item.id}
               onClick={() => onTabChange(item.id)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left ${
-                collapsed ? "justify-center" : ""
-              } ${
-                active
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left ${collapsed ? "justify-center" : ""
+                } ${active
                   ? "bg-cyan-500/10 text-cyan-400 font-medium"
                   : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
-              }`}
+                }`}
               title={collapsed ? item.name : undefined}
             >
               <Icon />
@@ -289,13 +286,11 @@ export function DashboardSidebar({
               <button
                 key={item.id}
                 onClick={() => onTabChange(item.id)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left ${
-                  collapsed ? "justify-center" : ""
-                } ${
-                  active
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left ${collapsed ? "justify-center" : ""
+                  } ${active
                     ? "bg-cyan-500/10 text-cyan-400 font-medium"
                     : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
-                }`}
+                  }`}
                 title={collapsed ? item.name : undefined}
               >
                 <Icon />
@@ -333,9 +328,8 @@ export function DashboardSidebar({
 
         <button
           onClick={logout}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full ${
-            collapsed ? "justify-center" : ""
-          } text-red-400 hover:bg-red-500/10`}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full ${collapsed ? "justify-center" : ""
+            } text-red-400 hover:bg-red-500/10`}
           title={collapsed ? "Sign Out" : undefined}
         >
           <LogoutIcon />
@@ -344,9 +338,8 @@ export function DashboardSidebar({
 
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full mt-2 ${
-            collapsed ? "justify-center" : ""
-          } text-slate-500 hover:bg-slate-900 hover:text-slate-300`}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full mt-2 ${collapsed ? "justify-center" : ""
+            } text-slate-500 hover:bg-slate-900 hover:text-slate-300`}
         >
           <CollapseIcon collapsed={collapsed} />
           {!collapsed && <span>Collapse</span>}

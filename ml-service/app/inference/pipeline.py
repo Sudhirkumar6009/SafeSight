@@ -1,5 +1,5 @@
 """
-ViolenceSense ML Service - Inference Pipeline
+SafeSight ML Service - Inference Pipeline
 
 This module handles the complete inference pipeline for violence detection.
 """
@@ -84,13 +84,13 @@ class InferencePipeline:
             
             # Run inference using model manager (handles both PyTorch and Keras)
             if self.model_manager.model_type == "keras":
-                # VGG16-LSTM model expects raw RGB frames (uint8 or float32 0-255)
-                # The VGG16LSTMModel wrapper handles VGG16 preprocessing internally
+                # MobileNetV2-LSTM model expects float32 RGB frames
+                # The MobileNetLSTMModel wrapper normalizes [0-255] -> [0-1] internally
                 # Input shape: (batch, num_frames, 224, 224, 3)
                 input_data = frames.astype(np.float32)  # (T, H, W, C) as float32
                 input_data = np.expand_dims(input_data, axis=0)  # (1, T, H, W, C)
                 
-                logger.info(f"Keras input shape: {input_data.shape}")
+                logger.info(f"Keras input shape: {input_data.shape}, range: [{input_data.min():.1f}, {input_data.max():.1f}]")
                 
                 # Run prediction - VGG16LSTMModel handles feature extraction
                 try:

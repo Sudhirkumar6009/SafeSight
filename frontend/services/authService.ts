@@ -32,8 +32,8 @@ export interface LoginData {
   password: string;
 }
 
-const TOKEN_KEY = "violencesense_token";
-const USER_KEY = "violencesense_user";
+const TOKEN_KEY = "safesight_token";
+const USER_KEY = "safesight_user";
 
 class AuthService {
   private token: string | null = null;

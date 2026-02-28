@@ -66,7 +66,7 @@ def load_keras_model_compatible(model_path: str):
             Run inference on a batch of frame sequences.
             
             Args:
-                frames_batch: (batch, num_frames, 224, 224, 3) - float32 [0-255]
+                frames_batch: (batch, num_frames, 224, 224, 3) - float32 [0-255] or [0-1]
                 verbose: Verbosity level
             
             Returns:
@@ -93,9 +93,13 @@ def load_keras_model_compatible(model_path: str):
                 frames_batch = frames_batch[:, indices, :, :, :]
                 logger.debug(f"Sampled frames to {self.expected_frames}")
             
-            # The model handles preprocessing internally (MobileNetV2 preprocessing)
-            # But we need to ensure float32 input
             frames_batch = frames_batch.astype(np.float32)
+            
+            # Normalize to [0, 1] if input is in [0, 255] range.
+            # The model was trained with rescale=1./255 normalization.
+            # Detect range by checking if max value exceeds 1.0.
+            if frames_batch.max() > 1.0:
+                frames_batch = frames_batch / 255.0
             
             # Run prediction
             return self._model.predict(frames_batch, verbose=verbose)

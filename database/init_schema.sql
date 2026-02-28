@@ -1,9 +1,9 @@
--- ViolenceSense Database Schema
+-- SafeSight Database Schema
 -- PostgreSQL Migration Script
 -- Version: 1.0.0
 -- 
--- Run this script to initialize the violencesense database:
--- psql -U postgres -d violencesense -f init_schema.sql
+-- Run this script to initialize the safesight database:
+-- psql -U postgres -d safesight -f init_schema.sql
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -289,4 +289,4 @@ COMMENT ON TABLE inference_logs IS 'Raw sliding-window predictions - useful for 
 COMMENT ON TABLE events IS 'Actual violence incidents - human-meaningful events for operators and reports';
 
 -- Done!
-SELECT 'ViolenceSense database schema initialized successfully!' as status;
+SELECT 'SafeSight database schema initialized successfully!' as status;

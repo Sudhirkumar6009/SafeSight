@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Stream Card Component
+ * SafeSight - Stream Card Component
  * ======================================
  * Displays stream status with real-time violence score indicator and video preview.
  */
@@ -304,13 +304,12 @@ export function StreamCard({
             {/* Violence Score Badge - Always visible when stream is active */}
             {isStreamActive && (
               <div
-                className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                  violenceScore > 0.65
+                className={`px-2 py-0.5 rounded-full text-xs font-bold ${violenceScore > 0.65
                     ? "bg-red-500/20 text-red-400 animate-pulse"
                     : violenceScore > 0.4
                       ? "bg-yellow-500/20 text-yellow-400"
                       : "bg-green-500/20 text-green-400"
-                }`}
+                  }`}
                 title={`Violence Score: ${(violenceScore * 100).toFixed(1)}%`}
               >
                 {(violenceScore * 100).toFixed(0)}%
@@ -525,8 +524,8 @@ export function StreamCard({
                       : ""}
                     {new Date(
                       score?.timestamp ||
-                        stream.last_prediction?.timestamp ||
-                        Date.now(),
+                      stream.last_prediction?.timestamp ||
+                      Date.now(),
                     ).toLocaleTimeString()}
                   </p>
                 )}

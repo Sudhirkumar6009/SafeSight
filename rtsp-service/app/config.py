@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     clips_retention_days: int = Field(default=7, alias="CLIPS_RETENTION_DAYS")
     
     # Database - PostgreSQL (production) or SQLite (development)
-    # PostgreSQL: postgresql://user:password@localhost:5432/violencesense
+    # PostgreSQL: postgresql://user:password@localhost:5432/safesight
     # SQLite: sqlite+aiosqlite:///./events.db
     database_url: str = Field(
         default="postgresql://postgres:password@localhost:5432/violencesense",

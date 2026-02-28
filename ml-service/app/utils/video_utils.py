@@ -1,5 +1,5 @@
 """
-ViolenceSense ML Service - Video Processing Utilities
+SafeSight ML Service - Video Processing Utilities
 
 This module handles video preprocessing for violence detection inference.
 """

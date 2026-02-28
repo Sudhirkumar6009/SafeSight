@@ -1,5 +1,5 @@
 {
-  "name": "violencesense-backend",
+  "name": "safesight-backend",
   "version": "1.0.0",
   "description": "AI-powered video violence detection backend API",
   "main": "dist/server.js",
@@ -18,7 +18,7 @@
     "express",
     "mongodb"
   ],
-  "author": "ViolenceSense Team",
+  "author": "SafeSight Team",
   "license": "MIT",
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",

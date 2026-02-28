@@ -1,9 +1,9 @@
 @echo off
-REM ViolenceSense ML Service Starter
+REM SafeSight ML Service Starter
 REM =================================
 REM Always uses the virtual environment Python with TensorFlow
 
-echo Starting ViolenceSense ML Service...
+echo Starting SafeSight ML Service...
 echo.
 
 cd /d "%~dp0"

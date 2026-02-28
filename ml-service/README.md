@@ -1,5 +1,5 @@
 ---
-title: ViolenceSense ML Service
+title: SafeSight ML Service
 emoji: 🤖
 colorFrom: red
 colorTo: gray
@@ -8,7 +8,7 @@ app_file: main.py
 pinned: false
 ---
 
-## ViolenceSense – Hugging Face ML Service
+## SafeSight – Hugging Face ML Service
 
 This Space runs a **Dockerized FastAPI service** for violence detection.
 

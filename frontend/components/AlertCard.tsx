@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Alert Card Component
+ * SafeSight - Alert Card Component
  * =====================================
  * Displays violence event alert with actions.
  */

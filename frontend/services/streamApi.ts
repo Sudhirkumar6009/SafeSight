@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Stream & Event API Services
+ * SafeSight - Stream & Event API Services
  * ============================================
  * API services for RTSP streams and violence events.
  */

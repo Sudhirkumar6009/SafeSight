@@ -476,6 +476,9 @@ class ClipRecorder:
         
         Uses PyAV (FFmpeg) for H.264 encoding so clips play in <video> tags.
         suffix can be '_alert' or '_full'.
+        
+        The fps parameter is only used as a fallback. The actual FPS is calculated
+        from frame timestamps to ensure real-time playback speed.
         """
         if not frames:
             logger.warning("No frames to save")
@@ -483,6 +486,18 @@ class ClipRecorder:
         
         try:
             import av as _av
+            
+            # Calculate actual FPS from frame timestamps for real-time playback
+            actual_fps = fps  # fallback
+            if len(frames) >= 2:
+                first_ts = frames[0].timestamp
+                last_ts = frames[-1].timestamp
+                elapsed = (last_ts - first_ts).total_seconds()
+                if elapsed > 0:
+                    actual_fps = len(frames) / elapsed
+                    # Clamp to reasonable range
+                    actual_fps = max(5.0, min(60.0, actual_fps))
+                    logger.info(f"📊 Clip FPS: {actual_fps:.1f} (from {len(frames)} frames over {elapsed:.1f}s)")
             
             # Generate filename
             timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -495,7 +510,7 @@ class ClipRecorder:
             
             # Encode with PyAV (H.264 in MP4 container — browser-compatible)
             container = _av.open(str(filepath), mode='w')
-            stream = container.add_stream('libx264', rate=int(fps))
+            stream = container.add_stream('libx264', rate=int(round(actual_fps)))
             stream.width = width
             stream.height = height
             stream.pix_fmt = 'yuv420p'
@@ -519,7 +534,8 @@ class ClipRecorder:
             
             container.close()
             
-            logger.info(f"✅ Saved H.264 clip: {filepath} ({len(frames)} frames)")
+            clip_duration = len(frames) / actual_fps
+            logger.info(f"✅ Saved H.264 clip: {filepath} ({len(frames)} frames, {clip_duration:.1f}s @ {actual_fps:.0f}fps)")
             return str(filepath)
             
         except Exception as e:

@@ -59,8 +59,6 @@ export default function Navbar() {
           <Link href="/" className="flex items-center space-x-3">
             <motion.div
               className="relative"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
             >
               <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
                 <Shield className="w-6 h-6 text-cyan-400" />
@@ -68,7 +66,7 @@ export default function Navbar() {
             </motion.div>
             <div>
               <span className="text-xl font-bold text-white">
-                Violence<span className="text-cyan-400">Sense</span>
+                Safe<span className="text-cyan-400">Sight</span>
               </span>
             </div>
           </Link>

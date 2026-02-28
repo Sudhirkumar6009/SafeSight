@@ -1,5 +1,5 @@
 /**
- * ViolenceSense Backend - Event Routes
+ * SafeSight Backend - Event Routes
  * =====================================
  * REST API endpoints for violence event management.
  *

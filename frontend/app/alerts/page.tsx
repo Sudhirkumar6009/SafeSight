@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Alerts Page
+ * SafeSight - Alerts Page
  * ===========================
  * View and manage violence detection events.
  */

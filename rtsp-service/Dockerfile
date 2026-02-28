@@ -1,4 +1,4 @@
-# ViolenceSense RTSP Service Dockerfile
+# SafeSight RTSP Service Dockerfile
 # =====================================
 # Python FastAPI service for RTSP stream ingestion and violence detection
 

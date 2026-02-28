@@ -40,7 +40,7 @@ class VideoAnalysisService {
   private async extractVideoToTemp(video: IVideo): Promise<string> {
     const bucket = getGridFSBucket();
     const tempDir = os.tmpdir();
-    const tempFilePath = path.join(tempDir, `violencesense_${video.filename}`);
+    const tempFilePath = path.join(tempDir, `safesight_${video.filename}`);
 
     logger.info(`Extracting video from GridFS to: ${tempFilePath}`);
 
@@ -176,10 +176,10 @@ class VideoAnalysisService {
           metrics: prediction.metrics,
           frameAnalysis: prediction.frameAnalysis
             ? {
-                totalFrames: prediction.frameAnalysis.totalFrames,
-                violentFrames: prediction.frameAnalysis.violentFrames,
-                nonViolentFrames: prediction.frameAnalysis.nonViolentFrames,
-              }
+              totalFrames: prediction.frameAnalysis.totalFrames,
+              violentFrames: prediction.frameAnalysis.violentFrames,
+              nonViolentFrames: prediction.frameAnalysis.nonViolentFrames,
+            }
             : undefined,
         },
       };

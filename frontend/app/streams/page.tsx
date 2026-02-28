@@ -1,5 +1,5 @@
 /**
- * ViolenceSense - Streams Management Page
+ * SafeSight - Streams Management Page
  * ========================================
  * Manage RTSP camera streams for violence detection.
  */
