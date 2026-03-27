@@ -3,6 +3,7 @@ export { default as VideoUpload } from "./VideoUpload";
 export { default as PredictionResult } from "./PredictionResult";
 export { default as DashboardSidebar } from "./DashboardSidebar";
 export { default as DashboardLayout } from "./DashboardLayout";
+export { default as LoadingOverlay } from "./LoadingOverlay";
 
 // Stream & Alert Components
 export { StreamCard, StreamCardCompact } from "./StreamCard";

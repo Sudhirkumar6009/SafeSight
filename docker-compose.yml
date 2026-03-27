@@ -1,6 +1,45 @@
 version: "3.8"
 
 services:
+  # =============================================================================
+  # MediaMTX - Streaming Backbone (RTSP/WebRTC/HLS)
+  # =============================================================================
+  # Architecture:
+  #   Cameras (RTSP) --> MediaMTX --> WebRTC (browser ~200-500ms latency)
+  #                                --> RTSP proxy (AI frame sampling)
+  #                                --> HLS (fallback)
+  # =============================================================================
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: safesight-mediamtx
+    restart: unless-stopped
+    ports:
+      # RTSP server - for camera ingestion and AI sampling
+      - "8554:8554"
+      # RTMP server - optional for OBS/streaming software
+      - "1935:1935"
+      # HLS server - fallback for older browsers
+      - "8888:8888"
+      # WebRTC server - PRIMARY for ultra-low latency
+      - "8889:8889"
+      # WebRTC UDP for ICE (range for multiple streams)
+      - "8189:8189/udp"
+      # API server - for programmatic control
+      - "9997:9997"
+      # Metrics (Prometheus)
+      - "9998:9998"
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    environment:
+      - MTX_LOGLEVEL=info
+    networks:
+      - violencesense-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9997/v3/paths/list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # MongoDB Database
   mongodb:
     image: mongo:7.0
@@ -98,8 +137,12 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=http://localhost:5000/api/v1
+      # WebRTC streaming endpoints
+      - NEXT_PUBLIC_RTSP_SERVICE_URL=http://localhost:8080
+      - NEXT_PUBLIC_MEDIAMTX_WEBRTC_URL=http://localhost:8889
     depends_on:
       - backend
+      - rtsp-service
     networks:
       - violencesense-network
     healthcheck:
@@ -108,10 +151,92 @@ services:
       timeout: 10s
       retries: 3
 
+  # =============================================================================
+  # RTSP Service - Stream Processing & AI Inference
+  # =============================================================================
+  # Handles:
+  #   - Stream management and AI frame sampling
+  #   - Violence detection inference
+  #   - Event recording and clip generation
+  #   - WebSocket real-time updates
+  # =============================================================================
+  rtsp-service:
+    build:
+      context: ./rtsp-service
+      dockerfile: Dockerfile
+    container_name: safesight-rtsp
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - HOST=0.0.0.0
+      - PORT=8080
+      # MediaMTX connection
+      - MEDIAMTX_HOST=mediamtx
+      - MEDIAMTX_API_PORT=9997
+      - MEDIAMTX_RTSP_PORT=8554
+      - MEDIAMTX_WEBRTC_PORT=8889
+      - MEDIAMTX_HLS_PORT=8888
+      # Database
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/violencesense
+      # ML settings - ONNX model (faster inference, falls back to .h5 if not found)
+      - MODEL_PATH=/app/models/violence_model.onnx
+      - VIOLENCE_THRESHOLD=0.50
+      - VIOLENCE_ALERT_THRESHOLD=0.80
+      - INFERENCE_INTERVAL=0.3
+      # GPU settings
+      - USE_GPU=true
+      - USE_HW_DECODE=true
+    volumes:
+      - ./rtsp-service:/app
+      - ./ml-service/models:/app/models:ro
+      - ./clips:/app/clips
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+    networks:
+      - violencesense-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # PostgreSQL Database (for rtsp-service)
+  postgres:
+    image: postgres:15-alpine
+    container_name: safesight-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=violencesense
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - violencesense-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 networks:
   violencesense-network:
     driver: bridge
 
 volumes:
   mongodb_data:
+    driver: local
+  postgres_data:
     driver: local

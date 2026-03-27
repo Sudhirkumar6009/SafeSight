@@ -11,13 +11,14 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import update
 import asyncio
 import os
 import mimetypes
 import numpy as np
 
 from app.config import settings
-from app.database import EventStatus, AlertSeverity
+from app.database import EventStatus, AlertSeverity, async_session, Stream
 from app.manager import stream_manager
 
 router = APIRouter()
@@ -42,11 +43,17 @@ def verify_file_path(file_path, base_dir = None) -> Optional[str]:
     if base_dir:
         full_path = Path(base_dir) / file_path_str
     else:
-        # If path is relative, use clips_dir as base
+        # If path is relative, use clips_storage_path as base (configurable)
         if not os.path.isabs(file_path_str):
-            full_path = Path(settings.clips_dir) / file_path_str
+            full_path = settings.clips_storage_path / file_path_str
         else:
             full_path = Path(file_path_str)
+    
+    # Also check legacy clips_dir for backward compatibility
+    if not full_path.exists():
+        legacy_path = Path(settings.clips_dir) / file_path_str
+        if legacy_path.exists():
+            return file_path_str
     
     return file_path_str if full_path.exists() else None
 
@@ -224,36 +231,93 @@ class StreamUpdate(BaseModel):
     custom_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
-@router.patch("/streams/{stream_id}")
-async def update_stream(stream_id: int, request: StreamUpdate):
+async def _update_stream(stream_id: int, request: StreamUpdate):
     """Update stream configuration. Note: Some changes may require restart."""
     try:
-        if stream_id not in stream_manager.streams:
+        db_updates = {}
+
+        if stream_id in stream_manager.streams:
+            instance = stream_manager.streams[stream_id]
+            config = instance.config
+
+            # Update active in-memory stream config.
+            if request.name is not None:
+                config.name = request.name
+                db_updates["name"] = request.name
+            if request.url is not None:
+                config.url = request.url
+                db_updates["url"] = request.url
+            if request.location is not None:
+                db_updates["location"] = request.location
+            if request.custom_threshold is not None:
+                instance.detector.threshold = request.custom_threshold
+                db_updates["custom_threshold"] = request.custom_threshold
+
+            response_data = {
+                "id": stream_id,
+                "name": config.name,
+                "url": config.url,
+                "rtsp_url": config.url,
+                "location": request.location,
+                "custom_threshold": request.custom_threshold,
+            }
+        elif stream_id in stream_manager.lazy_streams:
+            lazy_config = stream_manager.lazy_streams[stream_id]
+
+            # Update lazy stream config (stream not started yet).
+            if request.name is not None:
+                lazy_config.name = request.name
+                db_updates["name"] = request.name
+            if request.url is not None:
+                lazy_config.url = request.url
+                db_updates["url"] = request.url
+            if request.location is not None:
+                lazy_config.location = request.location
+                db_updates["location"] = request.location
+            if request.custom_threshold is not None:
+                lazy_config.custom_threshold = request.custom_threshold
+                db_updates["custom_threshold"] = request.custom_threshold
+
+            response_data = {
+                "id": stream_id,
+                "name": lazy_config.name,
+                "url": lazy_config.url,
+                "rtsp_url": lazy_config.url,
+                "location": lazy_config.location,
+                "custom_threshold": lazy_config.custom_threshold,
+            }
+        else:
             raise HTTPException(status_code=404, detail="Stream not found")
-        
-        instance = stream_manager.streams[stream_id]
-        config = instance.config
-        
-        # Update fields if provided (config is a dataclass)
-        # Note: url changes require stream restart to take effect
-        if request.name is not None:
-            config.name = request.name
-        if request.url is not None:
-            config.url = request.url
+
+        if db_updates:
+            db_updates["updated_at"] = datetime.utcnow()
+            async with async_session() as session:
+                await session.execute(
+                    update(Stream)
+                    .where(Stream.id == stream_id)
+                    .values(**db_updates)
+                )
+                await session.commit()
         
         return {
             "success": True, 
             "message": f"Stream {stream_id} updated. URL changes require restart.",
-            "data": {
-                "id": stream_id,
-                "name": config.name,
-                "url": config.url,
-            }
+            "data": response_data,
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/streams/{stream_id}")
+async def update_stream_patch(stream_id: int, request: StreamUpdate):
+    return await _update_stream(stream_id, request)
+
+
+@router.put("/streams/{stream_id}")
+async def update_stream_put(stream_id: int, request: StreamUpdate):
+    return await _update_stream(stream_id, request)
 
 
 @router.delete("/streams/{stream_id}")
@@ -566,7 +630,10 @@ async def no_action_required(event_id: int, request: EventUpdateRequest = None):
 @router.get("/clips/{filename}")
 async def get_clip(filename: str, request: Request):
     """Stream a video clip with HTTP Range request support for browser <video> playback."""
-    clip_path = Path(settings.clips_dir) / filename
+    # Try new configurable storage path first, then legacy path
+    clip_path = settings.clips_storage_path / filename
+    if not clip_path.exists():
+        clip_path = Path(settings.clips_dir) / filename
     
     if not clip_path.exists():
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -624,7 +691,12 @@ async def get_clip(filename: str, request: Request):
 @router.get("/thumbnails/{filename:path}")
 async def get_thumbnail(filename: str):
     """Get event thumbnail."""
-    thumb_path = Path(settings.clips_dir) / filename
+    # Try new configurable storage path first
+    thumb_path = settings.thumbnails_storage_path / filename
+    
+    if not thumb_path.exists():
+        # Fallback: check in legacy clips directory
+        thumb_path = Path(settings.clips_dir) / filename
     
     if not thumb_path.exists():
         # Fallback: check in thumbnails subdirectory if filename doesn't include it
@@ -644,12 +716,19 @@ async def get_thumbnail(filename: str):
 @router.get("/person-images/{filename:path}")
 async def get_person_image(filename: str):
     """Get captured person image from a violence event."""
-    image_path = Path(settings.clips_dir) / filename
+    # Try new configurable storage path first
+    image_path = settings.clips_storage_path / filename
+    
+    if not image_path.exists():
+        # Fallback: check legacy clips_dir
+        image_path = Path(settings.clips_dir) / filename
     
     if not image_path.exists():
         # Fallback: check in face_participants subdirectory
         if not filename.startswith("face_participants/"):
-            image_path = Path(settings.clips_dir) / "face_participants" / filename
+            image_path = settings.clips_storage_path / "face_participants" / filename
+            if not image_path.exists():
+                image_path = Path(settings.clips_dir) / "face_participants" / filename
     
     if not image_path.exists():
         raise HTTPException(status_code=404, detail="Person image not found")

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Cpu,
@@ -45,6 +46,7 @@ const architectures = [
 ];
 
 export default function ModelLoader({ onModelLoaded }: ModelLoaderProps) {
+  const router = useRouter();
   const [modelPath, setModelPath] = useState("");
   const [architecture, setArchitecture] = useState("videomae");
   const [modelName, setModelName] = useState("");
@@ -82,6 +84,7 @@ export default function ModelLoader({ onModelLoaded }: ModelLoaderProps) {
         }
 
         onModelLoaded?.();
+        router.push("/videos");
       } else {
         throw new Error(response.error || "Failed to load model");
       }

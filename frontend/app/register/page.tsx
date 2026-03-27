@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-  Shield,
   Mail,
   Lock,
   User,
@@ -90,8 +90,14 @@ export default function RegisterPage() {
         {/* Logo */}
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-cyan-500/20 rounded-xl flex items-center justify-center">
-              <Shield className="w-6 h-6 text-cyan-400" />
+            <div className="w-12 h-12 bg-cyan-500/20 rounded-xl flex items-center justify-center overflow-hidden">
+              <Image
+                src="/assets/logo.png"
+                alt="SafeSight Logo"
+                width={32}
+                height={32}
+                className="object-contain"
+              />
             </div>
             <span className="text-2xl font-bold text-white">
               Safe<span className="text-cyan-400">Sight</span>

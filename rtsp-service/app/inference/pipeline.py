@@ -5,6 +5,7 @@ Sliding window inference with continuous scoring
 """
 
 import asyncio
+import os
 import threading
 import time
 from datetime import datetime, timedelta
@@ -78,8 +79,10 @@ class SlidingWindowState:
 
 class LocalModelInference:
     """
-    Local model inference using the Keras model directly with GPU optimization.
-    Falls back to ML service API if local model not available.
+    Local model inference using ONNX Runtime (primary) or Keras (fallback).
+    
+    ONNX provides 2-3x faster inference with lower memory usage.
+    Automatically falls back to Keras if ONNX model not available.
     
     The model is a full end-to-end MobileNetV2+LSTM architecture:
     - Input: (batch, 16 frames, 224, 224, 3) - raw RGB frames
@@ -98,17 +101,140 @@ class LocalModelInference:
         self.model_path = model_path or settings.model_path
         self.model = None
         self.use_local = False
+        self.model_type = "none"  # "onnx", "keras", or "none"
+        self._ort = None
+        self._onnx_session = None
+        self._input_name = None
+        self._output_name = None
         self._tf = None
         self._warmup_done = False
         self._load_model()
     
     def _load_model(self):
-        """Load the full MobileNetV2+LSTM model with GPU optimization."""
-        try:
-            if not self.model_path or not Path(self.model_path).exists():
-                logger.warning(f"Local model not found at {self.model_path}, will use ML service API")
+        """Load model, preferring ONNX over Keras for better performance."""
+        if not self.model_path:
+            logger.warning("No model path configured")
+            return
+        
+        model_path = Path(self.model_path)
+        
+        # Try ONNX first (faster)
+        if model_path.suffix == '.onnx' and model_path.exists():
+            if self._load_onnx_model(model_path):
                 return
-                
+        
+        # Try ONNX variant of the path
+        onnx_path = model_path.with_suffix('.onnx')
+        if onnx_path.exists():
+            if self._load_onnx_model(onnx_path):
+                return
+        
+        # Fallback to Keras
+        if model_path.exists():
+            self._load_keras_model(model_path)
+        else:
+            # Try legacy .h5 path
+            h5_path = model_path.with_suffix('.h5')
+            if not h5_path.exists():
+                h5_path = Path(str(model_path).replace('.onnx', '_legacy.h5'))
+            if h5_path.exists():
+                self._load_keras_model(h5_path)
+            else:
+                logger.warning(f"No model found at {model_path}, will use ML service API")
+    
+    def _load_onnx_model(self, model_path: Path) -> bool:
+        """Load ONNX model with optimal execution provider."""
+        try:
+            import onnxruntime as ort
+            self._ort = ort
+            
+            logger.info(f"Loading ONNX model from {model_path}...")
+            
+            # Get available providers
+            available_providers = ort.get_available_providers()
+            logger.info(f"Available ONNX providers: {available_providers}")
+            
+            # Select providers (prefer GPU)
+            providers = []
+            execution_provider = "CPU"
+            
+            if 'CUDAExecutionProvider' in available_providers:
+                providers.append(('CUDAExecutionProvider', {
+                    'device_id': 0,
+                    'arena_extend_strategy': 'kNextPowerOfTwo',
+                    'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
+                    'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                }))
+                execution_provider = "CUDA"
+            
+            if 'DmlExecutionProvider' in available_providers:
+                providers.append('DmlExecutionProvider')
+                if execution_provider == "CPU":
+                    execution_provider = "DirectML"
+            
+            providers.append('CPUExecutionProvider')
+            
+            # Session options for optimal performance
+            sess_options = ort.SessionOptions()
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            sess_options.intra_op_num_threads = os.cpu_count() or 4
+            sess_options.inter_op_num_threads = 2
+            sess_options.enable_mem_pattern = True
+            sess_options.enable_cpu_mem_arena = True
+            
+            # Create session
+            self._onnx_session = ort.InferenceSession(
+                str(model_path),
+                sess_options=sess_options,
+                providers=providers
+            )
+            
+            self._input_name = self._onnx_session.get_inputs()[0].name
+            self._output_name = self._onnx_session.get_outputs()[0].name
+            
+            # Get expected frames from model input shape
+            input_shape = self._onnx_session.get_inputs()[0].shape
+            if input_shape and len(input_shape) == 5 and isinstance(input_shape[1], int):
+                self.EXPECTED_FRAMES = input_shape[1]
+            
+            self.use_local = True
+            self.model_type = "onnx"
+            
+            logger.info(f"✅ ONNX model loaded successfully ({execution_provider})")
+            logger.info(f"  Input: {self._input_name} {input_shape}")
+            logger.info(f"  Output: {self._output_name}")
+            logger.info(f"  Expected frames: {self.EXPECTED_FRAMES}")
+            
+            # Warmup
+            self._warmup_onnx()
+            
+            return True
+            
+        except ImportError:
+            logger.warning("ONNX Runtime not installed, will try Keras")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to load ONNX model: {e}")
+            return False
+    
+    def _warmup_onnx(self):
+        """Warmup ONNX model for optimal GPU memory allocation."""
+        if self._warmup_done or self._onnx_session is None:
+            return
+        
+        try:
+            logger.info("Warming up ONNX model...")
+            dummy_input = np.zeros((1, self.EXPECTED_FRAMES, 224, 224, 3), dtype=np.float32)
+            for _ in range(3):
+                self._onnx_session.run([self._output_name], {self._input_name: dummy_input})
+            self._warmup_done = True
+            logger.info("✅ ONNX model warmup complete")
+        except Exception as e:
+            logger.warning(f"ONNX warmup failed: {e}")
+    
+    def _load_keras_model(self, model_path: Path):
+        """Load the full MobileNetV2+LSTM model with GPU optimization (fallback)."""
+        try:
             import tensorflow as tf
             self._tf = tf
             from tensorflow import keras
@@ -116,53 +242,50 @@ class LocalModelInference:
             # Log GPU status
             gpus = tf.config.list_physical_devices('GPU')
             if gpus:
-                logger.info(f"GPU(s) available for inference: {len(gpus)}")
-                for gpu in gpus:
-                    logger.info(f"  - {gpu.name}")
+                logger.info(f"GPU(s) available for Keras inference: {len(gpus)}")
             else:
-                logger.warning("No GPU detected - inference will be slower")
+                logger.warning("No GPU detected for Keras - inference will be slower")
             
-            # Load the complete model directly (includes MobileNetV2 + LSTM)
-            logger.info(f"Loading full model from {self.model_path}...")
-            self.model = keras.models.load_model(self.model_path, compile=False)
+            # Load the complete model directly
+            logger.info(f"Loading Keras model from {model_path}...")
+            self.model = keras.models.load_model(str(model_path), compile=False)
             
             # Get expected frames from model input shape
             input_shape = self.model.input_shape
             if input_shape and len(input_shape) == 5 and input_shape[1]:
                 self.EXPECTED_FRAMES = input_shape[1]
             
-            logger.info(f"Model loaded successfully")
+            logger.info(f"✅ Keras model loaded successfully")
             logger.info(f"  Input shape: {self.model.input_shape}")
             logger.info(f"  Output shape: {self.model.output_shape}")
             logger.info(f"  Expected frames: {self.EXPECTED_FRAMES}")
             
             self.use_local = True
+            self.model_type = "keras"
             
             # Warmup
-            self._warmup_model()
+            self._warmup_keras()
                 
         except Exception as e:
-            logger.error(f"Failed to load local model: {e}")
+            logger.error(f"Failed to load Keras model: {e}")
             import traceback
             traceback.print_exc()
             self.use_local = False
     
-    def _warmup_model(self):
-        """Warmup the model with a dummy inference to optimize GPU memory allocation."""
+    def _warmup_keras(self):
+        """Warmup the Keras model."""
         if self._warmup_done or self.model is None:
             return
         
         try:
-            logger.info("Warming up model for GPU optimization...")
-            
+            logger.info("Warming up Keras model...")
             dummy_input = np.zeros((1, self.EXPECTED_FRAMES, 224, 224, 3), dtype=np.float32)
             for _ in range(3):
                 _ = self.model.predict(dummy_input, verbose=0)
-            
             self._warmup_done = True
-            logger.info("Model warmup complete - GPU memory allocated")
+            logger.info("✅ Keras model warmup complete")
         except Exception as e:
-            logger.warning(f"Model warmup failed: {e}")
+            logger.warning(f"Keras warmup failed: {e}")
     
     def preprocess_frames(self, frames: List[np.ndarray], target_size: tuple = None) -> np.ndarray:
         """
@@ -202,26 +325,35 @@ class LocalModelInference:
     
     def predict(self, frames: List[np.ndarray]) -> Dict[str, float]:
         """
-        Run inference on frames with GPU optimization.
-        Uses model.__call__ for lower latency than model.predict.
+        Run inference on frames using ONNX (primary) or Keras (fallback).
+        ONNX provides 2-3x faster inference with lower memory usage.
         """
-        if not self.use_local or self.model is None:
+        if not self.use_local:
             raise RuntimeError("Local model not available")
         
         # Preprocess frames into model input format
         input_data = self.preprocess_frames(frames)
         
-        # Run inference with optimized call
+        # Run inference based on model type
         start_time = time.time()
         
-        # Use model() directly instead of model.predict() for faster GPU inference
-        if self._tf is not None:
-            # Convert to tensor for faster GPU transfer
-            input_tensor = self._tf.constant(input_data, dtype=self._tf.float32)
-            predictions = self.model(input_tensor, training=False)
-            predictions = predictions.numpy()
+        if self.model_type == "onnx" and self._onnx_session is not None:
+            # ONNX Runtime inference (fastest)
+            predictions = self._onnx_session.run(
+                [self._output_name],
+                {self._input_name: input_data}
+            )[0]
+        elif self.model_type == "keras" and self.model is not None:
+            # Keras inference (fallback)
+            if self._tf is not None:
+                # Convert to tensor for faster GPU transfer
+                input_tensor = self._tf.constant(input_data, dtype=self._tf.float32)
+                predictions = self.model(input_tensor, training=False)
+                predictions = predictions.numpy()
+            else:
+                predictions = self.model.predict(input_data, verbose=0)
         else:
-            predictions = self.model.predict(input_data, verbose=0)
+            raise RuntimeError(f"No valid model loaded (type: {self.model_type})")
         
         inference_time = (time.time() - start_time) * 1000
         

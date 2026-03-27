@@ -1,0 +1,190 @@
+# =============================================================================
+# MediaMTX Configuration for SafeSight
+# Ultra Low Latency WebRTC Streaming (~200-500ms)
+# =============================================================================
+#
+# Architecture:
+#   Cameras (RTSP) --> MediaMTX --> WebRTC --> Browser (200-500ms latency)
+#                               --> RTSP Proxy --> AI Frame Sampler
+#                               --> HLS --> Fallback browsers
+#
+# Supports: 10-15 simultaneous camera streams
+# =============================================================================
+
+###############################################
+# General settings
+###############################################
+
+# Logging
+logLevel: info
+logDestinations: [stdout]
+
+# Timeouts optimized for low latency
+readTimeout: 10s
+writeTimeout: 10s
+writeQueueSize: 512
+
+# Buffer for multiple cameras (higher = more capacity)
+readBufferCount: 4096
+
+# HTTP API for programmatic control
+api: yes
+apiAddress: :9997
+
+# Metrics endpoint (Prometheus format)
+metrics: yes
+metricsAddress: :9998
+
+# Playback server (for recording playback - optional)
+playback: no
+
+###############################################
+# RTSP server settings
+###############################################
+
+rtsp: yes
+rtspAddress: :8554
+
+# TCP transport for reliability (no packet loss)
+protocols: [tcp]
+
+# Authentication (uncomment for production)
+# rtspAuthMethods: [basic]
+
+###############################################
+# RTMP server settings
+###############################################
+
+rtmp: yes
+rtmpAddress: :1935
+
+###############################################
+# HLS server settings (fallback for older browsers)
+###############################################
+
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: no
+hlsSegmentCount: 3
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsSegmentMaxSize: 50M
+
+# Low-latency HLS (LL-HLS)
+hlsVariant: lowLatency
+
+###############################################
+# WebRTC server settings (PRIMARY - Ultra Low Latency)
+###############################################
+
+webrtc: yes
+webrtcAddress: :8889
+
+# ICE servers for NAT traversal
+webrtcICEServers2:
+  # Google STUN servers (free, reliable)
+  - url: stun:stun.l.google.com:19302
+  - url: stun:stun1.l.google.com:19302
+  - url: stun:stun2.l.google.com:19302
+  - url: stun:stun3.l.google.com:19302
+  - url: stun:stun4.l.google.com:19302
+  
+  # For external/WAN access, add TURN server:
+  # - url: turn:your-turn-server.com:3478
+  #   username: user
+  #   password: pass
+
+# ICE candidate types to use
+webrtcICEHostNAT1To1IPs: []
+webrtcICEUDPMuxAddress: :8189
+webrtcICETCPMuxAddress: :8189
+
+# Local addresses
+webrtcLocalUDPAddress: :8889
+webrtcLocalTCPAddress: :8889
+
+# Additional hosts (for Docker/NAT - add your server's external IP)
+# webrtcAdditionalHosts: [192.168.1.100]
+
+###############################################
+# SRT settings (optional - for WAN streaming)
+###############################################
+
+srt: no
+srtAddress: :8890
+
+###############################################
+# Path defaults (applies to all streams)
+###############################################
+
+pathDefaults:
+  # Default source type
+  source: publisher
+  
+  # On-demand behavior (disable for lower latency)
+  sourceOnDemand: no
+  sourceOnDemandStartTimeout: 10s
+  sourceOnDemandCloseAfter: 60s
+  
+  # Maximum readers per stream (0 = unlimited)
+  maxReaders: 0
+  
+  # Recording (disabled by default - use rtsp-service for clips)
+  record: no
+  
+  # Disable fallback source
+  fallback: ""
+  
+  # Publisher timeout (0 = disabled)
+  publisherPauseAfter: 0s
+  
+  # Override source protocol for pulled streams
+  overridePublisher: yes
+
+###############################################
+# Path configurations
+###############################################
+
+paths:
+  # ===========================================
+  # Camera streams (cam_1, cam_2, cam_3, etc.)
+  # ===========================================
+  # Wildcard pattern for all camera streams
+  # Usage: rtsp://mediamtx:8554/cam_1
+  # WebRTC: http://mediamtx:8889/cam_1/whep
+  
+  cam_~:
+    source: publisher
+    sourceOnDemand: no
+    maxReaders: 100
+    
+  # ===========================================
+  # Direct camera pulls (alternative method)
+  # ===========================================
+  # Uncomment and configure to have MediaMTX pull directly from cameras
+  # This removes the need for rtsp-service to push to MediaMTX
+  
+  # camera1:
+  #   source: rtsp://admin:password@192.168.1.101:554/stream1
+  #   sourceOnDemand: yes
+  #   sourceOnDemandStartTimeout: 10s
+  #   sourceOnDemandCloseAfter: 30s
+  #   maxReaders: 50
+  
+  # camera2:
+  #   source: rtsp://admin:password@192.168.1.102:554/stream1
+  #   sourceOnDemand: yes
+  
+  # ===========================================
+  # Test stream for development
+  # ===========================================
+  test:
+    source: publisher
+    sourceOnDemand: no
+    maxReaders: 10
+    
+  # ===========================================
+  # All other streams (fallback)
+  # ===========================================
+  all_others:
+    source: publisher

@@ -1,8 +1,12 @@
 """
 SafeSight ML Service - FastAPI Application
+==========================================
+ONNX-based violence detection inference service.
 
-This is the main entry point for the ML inference service.
-Provides REST API endpoints for model management and video inference.
+Clean implementation based on reference code:
+- ONNX Runtime for fast, portable inference
+- 16-frame input, single sigmoid output
+- Simple preprocessing: resize 224x224, BGR->RGB, normalize [0,1]
 """
 
 import os
@@ -22,8 +26,7 @@ from typing import Optional, List
 import logging
 
 from app.config import settings
-from app.models import model_manager
-from app.inference import inference_pipeline
+from app.inference import inference_pipeline, get_detector
 
 # Configure logging
 logging.basicConfig(
@@ -35,8 +38,8 @@ logger = logging.getLogger(__name__)
 # Create FastAPI application
 app = FastAPI(
     title="SafeSight ML Service",
-    description="AI-powered video violence detection inference service",
-    version="1.0.0",
+    description="ONNX-powered violence detection inference service",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -55,49 +58,45 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Auto-load model from environment configuration on startup."""
+    """Auto-load ONNX model on startup."""
     model_path = settings.default_model_path
-    architecture = settings.model_architecture
     
-    logger.info(f"Startup - Checking for model at: {model_path}")
-    logger.info(f"Current working directory: {os.getcwd()}")
-    logger.info(f"Directory contents: {os.listdir('.')}")
+    logger.info(f"""
+╔═══════════════════════════════════════════════════════════╗
+║   SafeSight ML Service - ONNX Violence Detection          ║
+╚═══════════════════════════════════════════════════════════╝
+    """)
+    
+    logger.info(f"Model path: {model_path}")
+    logger.info(f"Current directory: {os.getcwd()}")
     
     # Check models directory
     if os.path.exists("models"):
-        logger.info(f"Models directory contents: {os.listdir('models')}")
-    else:
-        logger.warning("Models directory does not exist!")
+        logger.info(f"Models directory: {os.listdir('models')}")
     
     if model_path and os.path.exists(model_path):
-        logger.info(f"Auto-loading model from: {model_path}")
-        logger.info(f"Architecture: {architecture}")
+        logger.info(f"Loading ONNX model: {model_path}")
         
-        try:
-            result = model_manager.load_model(model_path, architecture)
-            if result["success"]:
-                logger.info("✓ Model auto-loaded successfully!")
-            else:
-                logger.warning(f"Model auto-load failed: {result.get('error', 'Unknown error')}")
-        except Exception as e:
-            logger.warning(f"Model auto-load failed: {e}")
+        detector = get_detector()
+        result = detector.load_model(model_path)
+        
+        if result["success"]:
+            logger.info("Model loaded successfully!")
+            logger.info(f"Providers: {detector.providers_used}")
+        else:
+            logger.warning(f"Model load failed: {result.get('error')}")
     else:
-        logger.warning(f"Model file not found at: {model_path}")
-        logger.info("No default model configured or model file not found. Skipping auto-load.")
+        logger.warning(f"Model not found: {model_path}")
 
 
 # ============== Pydantic Models ==============
 
 class ModelLoadRequest(BaseModel):
-    modelPath: str = Field(..., description="Path to the model file (.h5, .pth)")
-    architecture: str = Field(default="keras-cnn", description="Model architecture")
+    modelPath: str = Field(..., description="Path to the ONNX model file")
 
 
 class InferenceRequest(BaseModel):
     videoPath: str = Field(..., description="Path to the video file")
-    modelPath: Optional[str] = Field(None, description="Optional model path")
-    architecture: Optional[str] = Field(None, description="Model architecture")
-    numFrames: Optional[int] = Field(None, description="Number of frames to process")
 
 
 class HealthResponse(BaseModel):
@@ -107,9 +106,9 @@ class HealthResponse(BaseModel):
 
 class ModelStatusResponse(BaseModel):
     isLoaded: bool
-    currentModel: Optional[dict]
-    gpuAvailable: bool
-    gpuMemory: Optional[dict]
+    modelPath: Optional[str]
+    providers: List[str]
+    config: dict
 
 
 # ============== Health Endpoints ==============
@@ -126,16 +125,19 @@ async def health_check():
 @app.get("/", tags=["Health"])
 async def root():
     """Root endpoint with service info."""
+    detector = get_detector()
     return {
         "service": "SafeSight ML Service",
-        "version": "1.0.0",
-        "status": "running",
+        "version": "2.0.0",
+        "engine": "ONNX Runtime",
+        "model_loaded": detector.is_loaded,
+        "providers": detector.providers_used,
         "endpoints": {
             "health": "/health",
             "model_load": "/model/load",
             "model_status": "/model/status",
-            "model_metrics": "/model/metrics",
-            "inference": "/inference/predict"
+            "inference": "/inference/predict",
+            "inference_upload": "/inference/predict-upload"
         }
     }
 
@@ -145,51 +147,66 @@ async def root():
 @app.post("/model/load", tags=["Model"])
 async def load_model(request: ModelLoadRequest):
     """
-    Load a PyTorch model from the specified path.
+    Load an ONNX model from the specified path.
     
-    - **modelPath**: Absolute path to the .pth model file
-    - **architecture**: Model architecture (videomae, timesformer, slowfast, resnet3d, i3d, custom)
+    - **modelPath**: Path to the .onnx model file
     """
     try:
-        result = model_manager.load_model(
-            request.modelPath,
-            request.architecture
-        )
+        detector = get_detector()
+        result = detector.load_model(request.modelPath)
         
         if not result["success"]:
-            raise HTTPException(status_code=400, detail=result.get("error", "Failed to load model"))
+            raise HTTPException(status_code=400, detail=result.get("error"))
         
         return result
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/model/status", response_model=ModelStatusResponse, tags=["Model"])
+@app.get("/model/status", tags=["Model"])
 async def get_model_status():
-    """Get current model status and GPU information."""
-    return model_manager.get_status()
+    """Get current model status."""
+    detector = get_detector()
+    status = detector.get_status()
+    
+    return {
+        "isLoaded": status["is_loaded"],
+        "modelPath": status["model_path"],
+        "providers": status["providers"],
+        "config": status["config"]
+    }
 
 
 @app.get("/model/metrics", tags=["Model"])
 async def get_model_metrics():
     """Get model performance metrics."""
-    if not model_manager.is_loaded:
+    detector = get_detector()
+    
+    if not detector.is_loaded:
         raise HTTPException(status_code=400, detail="No model loaded")
     
-    return model_manager.get_metrics()
+    return {
+        "is_loaded": detector.is_loaded,
+        "providers": detector.providers_used,
+        "config": {
+            "seq_len": detector.SEQ_LEN,
+            "img_size": detector.IMG_SIZE,
+            "frame_skip": detector.FRAME_SKIP
+        }
+    }
 
 
 @app.post("/model/unload", tags=["Model"])
 async def unload_model():
     """Unload the current model and free memory."""
-    success = model_manager.unload_model()
+    detector = get_detector()
+    detector.unload_model()
     
-    if success:
-        return {"success": True, "message": "Model unloaded successfully"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to unload model")
+    return {"success": True, "message": "Model unloaded successfully"}
 
 
 # ============== Inference Endpoints ==============
@@ -197,28 +214,26 @@ async def unload_model():
 @app.post("/inference/predict", tags=["Inference"])
 async def predict(request: InferenceRequest):
     """
-    Run violence detection inference on a video (local path).
+    Run violence detection on a video file (local path).
     
     - **videoPath**: Path to the video file (mp4, avi, mov)
-    - **modelPath**: Optional path to load a different model
-    - **architecture**: Model architecture if loading new model
-    - **numFrames**: Number of frames to process (default: 20)
     """
     try:
         # Validate video path
         if not os.path.exists(request.videoPath):
-            raise HTTPException(status_code=400, detail=f"Video file not found: {request.videoPath}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Video file not found: {request.videoPath}"
+            )
         
         # Run inference
-        result = inference_pipeline.predict(
-            video_path=request.videoPath,
-            model_path=request.modelPath,
-            architecture=request.architecture,
-            num_frames=request.numFrames
-        )
+        result = inference_pipeline.predict(video_path=request.videoPath)
         
         if not result["success"]:
-            raise HTTPException(status_code=500, detail=result.get("error", "Inference failed"))
+            raise HTTPException(
+                status_code=500, 
+                detail=result.get("error", "Inference failed")
+            )
         
         return result
     
@@ -231,15 +246,12 @@ async def predict(request: InferenceRequest):
 
 @app.post("/inference/predict-upload", tags=["Inference"])
 async def predict_upload(
-    video: UploadFile = File(..., description="Video file to analyze"),
-    numFrames: Optional[int] = Form(None, description="Number of frames to process")
+    video: UploadFile = File(..., description="Video file to analyze")
 ):
     """
-    Run violence detection inference on an uploaded video file.
-    Use this endpoint when sending video files from remote services.
+    Run violence detection on an uploaded video file.
     
-    - **video**: Video file (mp4, avi, mov)
-    - **numFrames**: Number of frames to process (default: 20)
+    - **video**: Video file (mp4, avi, mov, mkv, webm)
     """
     temp_path = None
     try:
@@ -249,7 +261,7 @@ async def predict_upload(
         
         if file_ext not in allowed_extensions:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Invalid file type: {file_ext}. Allowed: {', '.join(allowed_extensions)}"
             )
         
@@ -258,16 +270,16 @@ async def predict_upload(
             temp_path = temp_file.name
             shutil.copyfileobj(video.file, temp_file)
         
-        logger.info(f"Received video upload: {video.filename}, saved to: {temp_path}")
+        logger.info(f"Received video: {video.filename}, saved to: {temp_path}")
         
         # Run inference
-        result = inference_pipeline.predict(
-            video_path=temp_path,
-            num_frames=numFrames
-        )
+        result = inference_pipeline.predict(video_path=temp_path)
         
         if not result["success"]:
-            raise HTTPException(status_code=500, detail=result.get("error", "Inference failed"))
+            raise HTTPException(
+                status_code=500, 
+                detail=result.get("error", "Inference failed")
+            )
         
         return result
     
@@ -281,7 +293,6 @@ async def predict_upload(
         if temp_path and os.path.exists(temp_path):
             try:
                 os.unlink(temp_path)
-                logger.debug(f"Cleaned up temp file: {temp_path}")
             except Exception as e:
                 logger.warning(f"Failed to clean up temp file: {e}")
 
@@ -297,7 +308,10 @@ async def batch_predict(video_paths: List[str]):
         # Validate paths
         for path in video_paths:
             if not os.path.exists(path):
-                raise HTTPException(status_code=400, detail=f"Video file not found: {path}")
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Video file not found: {path}"
+                )
         
         results = inference_pipeline.batch_predict(video_paths)
         return {"success": True, "results": results}
@@ -315,11 +329,11 @@ if __name__ == "__main__":
     logger.info(f"""
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
-║   🧠 SafeSight ML Service                                 ║
+║   SafeSight ML Service - ONNX Violence Detection          ║
 ║                                                           ║
-║   Starting inference service...                           ║
 ║   Host: {settings.host}                                   ║
 ║   Port: {settings.port}                                   ║
+║   Model: {settings.default_model_path}                    ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
     """)

@@ -14,6 +14,10 @@ import {
   EventUpdateRequest,
   EventFilters,
   EventStats,
+  VideoClip,
+  VideoClipsResponse,
+  ExtractedFace,
+  ExtractedFacesResponse,
 } from "@/types";
 
 const RTSP_SERVICE_URL =
@@ -103,8 +107,18 @@ class StreamService {
     if (data.custom_threshold !== undefined)
       payload.custom_threshold = data.custom_threshold;
 
-    const response = await this.client.patch(`/streams/${id}`, payload);
-    return response.data;
+    try {
+      const response = await this.client.patch(`/streams/${id}`, payload);
+      return response.data;
+    } catch (error: any) {
+      // Some gateways/proxies block PATCH; retry with PUT for compatibility.
+      const status = error?.response?.status;
+      if (status === 403 || status === 405 || status === 501) {
+        const response = await this.client.put(`/streams/${id}`, payload);
+        return response.data;
+      }
+      throw error;
+    }
   }
 
   // Delete stream
@@ -234,9 +248,28 @@ class StreamService {
     return `${RTSP_SERVICE_URL}/api/v1/person-images/${filename}`;
   }
 
-  // Get face/participant image URL (served from RTSP service clips/face_participants)
-  getFaceUrl(facePath: string): string {
+  // Get face/participant image URL (served from RTSP service)
+  // Handles multiple formats:
+  // - "face_participants/{event_id}/{filename.jpg}" - legacy filesystem
+  // - "db:{face_id}" - database stored faces
+  // - "{hex_filename}" - encrypted storage faces (need event_id)
+  getFaceUrl(facePath: string, eventId?: string): string {
     if (!facePath) return "";
+    
+    // Handle database stored faces (format: "db:123")
+    if (facePath.startsWith("db:")) {
+      const faceId = facePath.slice(3);
+      // Use the extracted-faces image endpoint
+      return `${RTSP_SERVICE_URL}/api/v1/extracted-faces/${faceId}/image`;
+    }
+    
+    // Handle encrypted storage faces (hex filenames like "5b2d87a29294d0afd494ff41939c700b")
+    // These need the event_id to build the correct URL
+    if (eventId && /^[a-f0-9]{32}$/i.test(facePath)) {
+      return `${RTSP_SERVICE_URL}/api/v1/faces/${eventId}/secure/${facePath}`;
+    }
+    
+    // Handle legacy face_participants format
     // facePath format: "face_participants/{event_id}/{filename.jpg}"
     // API expects: /api/v1/faces/{event_id}/{filename}
     const parts = facePath.replace(/^face_participants\//, "").split("/");
@@ -250,7 +283,7 @@ class StreamService {
   async extractFaces(
     eventId: string,
   ): Promise<
-    ApiResponse<{ event_id: string; faces: string[]; count: number }>
+    ApiResponse<{ event_id: string; faces_count: number; stored_in_db: boolean; storage: string }>
   > {
     try {
       const response = await this.client.post(`/faces/${eventId}/extract`);
@@ -264,7 +297,7 @@ class StreamService {
   async getFaces(
     eventId: string,
   ): Promise<
-    ApiResponse<{ event_id: string; faces: string[]; count: number }>
+    ApiResponse<{ event_id: string; faces: any[]; count: number; source: string }>
   > {
     try {
       const response = await this.client.get(`/faces/${eventId}`);

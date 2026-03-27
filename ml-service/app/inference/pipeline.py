@@ -1,18 +1,20 @@
 """
 SafeSight ML Service - Inference Pipeline
+==========================================
+Simplified violence detection pipeline using ONNX Runtime.
 
-This module handles the complete inference pipeline for violence detection.
+Based on trusted reference implementation:
+- ONNX-only inference (no PyTorch/Keras)
+- Simple preprocessing: resize, BGR->RGB, normalize to [0,1]
+- 16-frame input, single sigmoid output
 """
 
-import torch
-import torch.nn.functional as F
-import numpy as np
 import time
-from typing import Dict, Any, Optional
 import logging
+from typing import Dict, Any, List
+import os
 
-from ..models import model_manager
-from ..utils import load_video_frames, preprocess_frames, analyze_frame_scores
+from .onnx_detector import ONNXViolenceDetector, get_detector
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -20,27 +22,22 @@ logger = logging.getLogger(__name__)
 
 class InferencePipeline:
     """
-    Handles the complete inference pipeline for violence detection.
+    Simplified violence detection pipeline.
+    
+    Uses ONNX Runtime for fast, portable inference.
+    Based on trusted reference implementation.
     """
     
     def __init__(self):
-        self.model_manager = model_manager
+        self.detector = get_detector()
     
-    def predict(
-        self,
-        video_path: str,
-        model_path: Optional[str] = None,
-        architecture: Optional[str] = None,
-        num_frames: Optional[int] = None
-    ) -> Dict[str, Any]:
+    def predict(self, video_path: str, **kwargs) -> Dict[str, Any]:
         """
-        Run inference on a video file.
+        Run violence detection on a video file.
         
         Args:
             video_path: Path to the video file
-            model_path: Optional path to model (uses loaded model if not specified)
-            architecture: Model architecture (if loading new model)
-            num_frames: Number of frames to extract
+            **kwargs: Ignored for API compatibility
         
         Returns:
             Prediction results dictionary
@@ -48,134 +45,59 @@ class InferencePipeline:
         start_time = time.time()
         
         try:
-            # Load model if path specified and different from current
-            if model_path and model_path != self.model_manager.model_path:
-                result = self.model_manager.load_model(
-                    model_path,
-                    architecture or settings.model_architecture
-                )
+            # Ensure model is loaded
+            if not self.detector.is_loaded:
+                model_to_load = settings.default_model_path
+                logger.info(f"Loading model from: {model_to_load}")
+                result = self.detector.load_model(model_to_load)
                 if not result["success"]:
                     return {
                         "success": False,
                         "error": result.get("error", "Failed to load model")
                     }
             
-            # Check if model is loaded
-            if not self.model_manager.is_loaded:
+            # Validate video path
+            if not os.path.exists(video_path):
                 return {
                     "success": False,
-                    "error": "No model loaded. Please load a model first."
+                    "error": f"Video file not found: {video_path}"
                 }
             
-            # Set parameters
-            n_frames = num_frames or settings.num_frames
-            frame_size = (settings.frame_size, settings.frame_size)
+            # Run prediction
+            result = self.detector.predict_video(video_path)
             
-            # Load and preprocess video
-            logger.info(f"Processing video: {video_path}")
-            frames, metadata = load_video_frames(
-                video_path,
-                num_frames=n_frames,
-                frame_size=frame_size
-            )
+            if not result["success"]:
+                return result
             
-            # Preprocess frames
-            input_tensor = preprocess_frames(frames)
-            
-            # Run inference using model manager (handles both PyTorch and Keras)
-            if self.model_manager.model_type == "keras":
-                # MobileNetV2-LSTM model expects float32 RGB frames
-                # The MobileNetLSTMModel wrapper normalizes [0-255] -> [0-1] internally
-                # Input shape: (batch, num_frames, 224, 224, 3)
-                input_data = frames.astype(np.float32)  # (T, H, W, C) as float32
-                input_data = np.expand_dims(input_data, axis=0)  # (1, T, H, W, C)
-                
-                logger.info(f"Keras input shape: {input_data.shape}, range: [{input_data.min():.1f}, {input_data.max():.1f}]")
-                
-                # Run prediction - VGG16LSTMModel handles feature extraction
-                try:
-                    logits = self.model_manager.model.predict(input_data, verbose=0)
-                    logger.info(f"Keras output shape: {logits.shape}, values: {logits}")
-                except Exception as e:
-                    logger.error(f"Keras prediction failed: {e}")
-                    raise e
-                
-                probs = logits[0]  # Get first batch item
-                
-                # Handle different output formats
-                if len(probs.shape) > 1:
-                    probs = probs.flatten()
-                
-                # If model outputs logits (not probabilities), apply softmax
-                if len(probs) >= 2 and (probs.sum() > 1.1 or probs.min() < 0):
-                    from scipy.special import softmax
-                    probs = softmax(probs)
-                
-                # Handle single output (sigmoid) vs two outputs (softmax)
-                if len(probs) == 1:
-                    # Single output - sigmoid style
-                    violence_prob = float(probs[0])
-                    non_violence_prob = 1.0 - violence_prob
-                else:
-                    # Two outputs - class probabilities
-                    violence_prob = float(probs[0])
-                    non_violence_prob = float(probs[1])
-            else:
-                # PyTorch model
-                input_tensor = input_tensor.to(self.model_manager.device)
-                
-                with torch.no_grad():
-                    if self.model_manager.use_fp16:
-                        with torch.cuda.amp.autocast():
-                            logits = self.model_manager.model(input_tensor)
-                    else:
-                        logits = self.model_manager.model(input_tensor)
-                
-                # Get probabilities
-                probs = F.softmax(logits, dim=1)[0].cpu().numpy()
-                
-                # Map to class labels (index 0 = violence, index 1 = non-violence)
-                violence_prob = float(probs[0])
-                non_violence_prob = float(probs[1])
-            
-            # Determine classification
-            if violence_prob > non_violence_prob:
-                classification = "violence"
-                confidence = violence_prob
-            else:
-                classification = "non-violence"
-                confidence = non_violence_prob
-            
-            # Calculate inference time
-            inference_time = time.time() - start_time
-            
-            # Update metrics
-            self.model_manager.update_metrics(inference_time)
-            
-            # Generate frame analysis (simulated for now)
-            frame_scores = self._generate_frame_scores(frames, violence_prob)
-            frame_analysis = analyze_frame_scores(frame_scores)
-            
-            logger.info(f"Inference completed: {classification} ({confidence:.2%})")
+            # Format response (compatible with existing API)
+            total_time = time.time() - start_time
             
             return {
                 "success": True,
-                "classification": classification,
-                "confidence": confidence,
+                "classification": result["classification"].lower().replace(" ", "-"),
+                "confidence": result["confidence"],
                 "probabilities": {
-                    "violence": violence_prob,
-                    "nonViolence": non_violence_prob
+                    "violence": result["violence_score"],
+                    "nonViolence": result["normal_score"]
                 },
                 "metrics": {
-                    "inferenceTime": inference_time,
-                    "framesProcessed": n_frames
+                    "inferenceTime": total_time,
+                    "inferenceTimeMs": result["inference_time_ms"],
+                    "framesProcessed": result["frame_count"]
                 },
-                "frameAnalysis": frame_analysis,
-                "videoMetadata": metadata
+                "videoMetadata": result.get("video_metadata", {}),
+                "frameAnalysis": {
+                    "totalFrames": result["frame_count"],
+                    "violentFrames": result["frame_count"] if result["violence_score"] > 0.5 else 0,
+                    "nonViolentFrames": result["frame_count"] if result["violence_score"] <= 0.5 else 0,
+                    "frameScores": [result["violence_score"]] * result["frame_count"]
+                }
             }
-        
+            
         except Exception as e:
             logger.error(f"Inference failed: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 "success": False,
                 "error": str(e),
@@ -191,46 +113,56 @@ class InferencePipeline:
                 }
             }
     
-    def _generate_frame_scores(
-        self,
-        frames: np.ndarray,
-        overall_prob: float
-    ) -> list:
+    def predict_frames(self, frames: List) -> Dict[str, Any]:
         """
-        Generate per-frame scores based on overall probability.
-        In a real implementation, this would analyze each frame individually.
+        Run violence detection on a list of frames.
+        
+        Args:
+            frames: List of BGR frames from OpenCV
+        
+        Returns:
+            Prediction results
         """
-        num_frames = len(frames)
+        if not self.detector.is_loaded:
+            model_to_load = settings.default_model_path
+            result = self.detector.load_model(model_to_load)
+            if not result["success"]:
+                return result
         
-        # Simulate frame-level scores with some variation around the overall probability
-        base_scores = np.random.normal(overall_prob, 0.1, num_frames)
-        base_scores = np.clip(base_scores, 0, 1)
-        
-        return base_scores.tolist()
+        return self.detector.predict(frames)
     
-    def batch_predict(
-        self,
-        video_paths: list,
-        **kwargs
-    ) -> list:
+    def batch_predict(self, video_paths: List[str], **kwargs) -> List[Dict[str, Any]]:
         """
         Run inference on multiple videos.
         
         Args:
             video_paths: List of video file paths
-            **kwargs: Additional arguments passed to predict()
+            **kwargs: Ignored for API compatibility
         
         Returns:
             List of prediction results
         """
         results = []
         for path in video_paths:
-            result = self.predict(path, **kwargs)
+            result = self.predict(path)
             results.append({
                 "video_path": path,
                 **result
             })
         return results
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get pipeline status."""
+        return {
+            "is_loaded": self.detector.is_loaded,
+            "model_path": self.detector.model_path,
+            "providers": self.detector.providers_used,
+            "config": {
+                "seq_len": self.detector.SEQ_LEN,
+                "img_size": self.detector.IMG_SIZE,
+                "frame_skip": self.detector.FRAME_SKIP
+            }
+        }
 
 
 # Global inference pipeline instance

@@ -399,6 +399,14 @@ export interface InferenceScoreMessage {
   is_violent: boolean;
   timestamp: string; // Required!
   fps?: number;
+  // Enhanced inference metrics (from ONNX migration)
+  inference_time_ms?: number;
+  model_type?: "onnx" | "keras" | "unknown";
+  raw_score?: number;
+  stabilized_score?: number;
+  is_confirmed?: boolean;
+  is_camera_shake?: boolean;
+  is_stable?: boolean;
 }
 
 export interface AlertMessage {
@@ -446,5 +454,90 @@ export interface DashboardStats {
     ml_service_status: "online" | "offline";
     rtsp_service_status: "online" | "offline";
     backend_status: "online" | "offline";
+  };
+}
+
+// ============================================
+// Video Clip Types (Gallery)
+// ============================================
+
+export interface VideoClipEvent {
+  id: number;
+  severity: EventSeverity | null;
+  status: EventStatus | null;
+  max_confidence: number;
+  stream_name: string;
+}
+
+export interface VideoClip {
+  id: number;
+  event_id: number | null;
+  stream_id: number | null;
+  filename: string;
+  file_path?: string;
+  file_size_bytes: number | null;
+  duration_seconds: number | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  frame_count: number | null;
+  has_thumbnail: boolean;
+  recorded_at: string | null;
+  created_at: string | null;
+  event: VideoClipEvent | null;
+  face_count?: number;
+}
+
+export interface VideoClipsResponse {
+  success: boolean;
+  data: VideoClip[];
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
+}
+
+// ============================================
+// Extracted Face Types (Gallery)
+// ============================================
+
+export interface ExtractedFaceEvent {
+  id: number;
+  severity: EventSeverity | null;
+  status: EventStatus | null;
+  stream_name: string;
+  start_time: string | null;
+}
+
+export interface ExtractedFaceBbox {
+  x: number | null;
+  y: number | null;
+  width: number | null;
+  height: number | null;
+}
+
+export interface ExtractedFace {
+  id: number;
+  clip_id: number;
+  stream_id: number | null;
+  event_id: number | null;
+  face_index: number;
+  confidence: number | null;
+  image_size_bytes: number | null;
+  bbox: ExtractedFaceBbox | null;
+  frame_number: number | null;
+  frame_timestamp_ms: number | null;
+  extracted_at: string | null;
+  event: ExtractedFaceEvent | null;
+}
+
+export interface ExtractedFacesResponse {
+  success: boolean;
+  data: ExtractedFace[];
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
   };
 }

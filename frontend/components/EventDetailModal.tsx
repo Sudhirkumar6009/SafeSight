@@ -135,12 +135,32 @@ export function EventDetailModal({
     setExtractionError(null);
 
     try {
-      const eventId = event.event_id || event.id;
+      const eventId = event.event_id || String(event.id);
       const result = await streamService.extractFaces(eventId);
 
       if (result.success && result.data) {
-        setExtractedFaces(result.data.faces || []);
-        if (result.data.count === 0) {
+        // After extraction, fetch the faces from the API to get the proper URLs
+        const facesResult = await streamService.getFaces(eventId);
+        if (facesResult.success && facesResult.data) {
+          // Extract face URLs or IDs from the response
+          const faceData = facesResult.data;
+          if (faceData.faces && faceData.faces.length > 0) {
+            // faceData.faces contains objects with url, id, secure_filename etc
+            // We need to extract the IDs/filenames for display
+            const faceIds = faceData.faces.map((face: any) => {
+              if (face.secure_filename) return face.secure_filename;
+              if (face.id && faceData.source === 'database') return `db:${face.id}`;
+              if (face.filename) return face.filename;
+              return face.id || face.url;
+            });
+            setExtractedFaces(faceIds);
+          } else {
+            setExtractionError("No faces detected in this clip");
+          }
+        } else if (result.data.faces_count > 0) {
+          // Extraction succeeded but getFaces failed - show count anyway
+          setExtractionError(`Extracted ${result.data.faces_count} faces. Refresh to view.`);
+        } else {
           setExtractionError("No faces detected in this clip");
         }
       } else {
@@ -454,7 +474,7 @@ export function EventDetailModal({
                         className="relative aspect-[3/4] bg-slate-900 rounded-lg overflow-hidden cursor-pointer group border border-slate-700 hover:border-cyan-500/50 transition-colors"
                       >
                         <img
-                          src={streamService.getFaceUrl(img)}
+                          src={streamService.getFaceUrl(img, event.event_id || String(event.id))}
                           alt={`Participant ${idx + 1}`}
                           className="w-full h-full object-cover"
                           onError={(e) => {
@@ -542,7 +562,9 @@ export function EventDetailModal({
                   src={
                     selectedPersonImage.includes("face_participants")
                       ? streamService.getFaceUrl(selectedPersonImage)
-                      : streamService.getPersonImageUrl(selectedPersonImage)
+                      : selectedPersonImage.startsWith("db:") || /^[a-f0-9]{32}$/i.test(selectedPersonImage)
+                        ? streamService.getFaceUrl(selectedPersonImage, event.event_id || String(event.id))
+                        : streamService.getPersonImageUrl(selectedPersonImage)
                   }
                   alt="Participant capture"
                   className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"

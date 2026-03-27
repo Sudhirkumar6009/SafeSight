@@ -476,10 +476,24 @@ export function StreamCard({
 
             {/* Violence Score Overlay */}
             {score && (
-              <div className="absolute top-2 right-2 bg-black/70 rounded px-2 py-1">
-                <span className={`text-sm font-bold ${scoreColor}`}>
-                  {(violenceScore * 100).toFixed(0)}%
-                </span>
+              <div className="absolute top-2 right-2 bg-black/70 rounded px-2 py-1 text-right">
+                <div className="flex items-center gap-2">
+                  {score.is_camera_shake && (
+                    <span className="text-xs text-yellow-400">SHAKE</span>
+                  )}
+                  {score.is_confirmed && (
+                    <span className="text-xs text-red-400 font-semibold animate-pulse">!</span>
+                  )}
+                  <span className={`text-sm font-bold ${scoreColor}`}>
+                    {(violenceScore * 100).toFixed(0)}%
+                  </span>
+                </div>
+                {score.inference_time_ms && (
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {score.inference_time_ms.toFixed(0)}ms
+                    {score.model_type && ` • ${score.model_type.toUpperCase()}`}
+                  </div>
+                )}
               </div>
             )}
 
@@ -505,9 +519,22 @@ export function StreamCard({
               <div className="p-4 border-b border-gray-700">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-400">Violence Score</span>
-                  <span className={`text-lg font-bold ${scoreColor}`}>
-                    {(violenceScore * 100).toFixed(0)}%
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {/* Camera stability indicator */}
+                    {score?.is_camera_shake && (
+                      <span className="text-xs text-yellow-400" title="Camera shake detected">
+                        SHAKE
+                      </span>
+                    )}
+                    {score?.is_confirmed && (
+                      <span className="text-xs text-red-400 font-semibold animate-pulse" title="Violence confirmed">
+                        CONFIRMED
+                      </span>
+                    )}
+                    <span className={`text-lg font-bold ${scoreColor}`}>
+                      {(violenceScore * 100).toFixed(0)}%
+                    </span>
+                  </div>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
                   <motion.div
@@ -518,16 +545,26 @@ export function StreamCard({
                   />
                 </div>
                 {(score || stream.last_prediction) && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    {score?.fps?.toFixed(1)
-                      ? `${score.fps.toFixed(1)} FPS • `
-                      : ""}
-                    {new Date(
-                      score?.timestamp ||
-                      stream.last_prediction?.timestamp ||
-                      Date.now(),
-                    ).toLocaleTimeString()}
-                  </p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-xs text-gray-500">
+                      {score?.fps?.toFixed(1)
+                        ? `${score.fps.toFixed(1)} FPS`
+                        : ""}
+                      {score?.inference_time_ms
+                        ? ` • ${score.inference_time_ms.toFixed(0)}ms`
+                        : ""}
+                      {score?.model_type
+                        ? ` • ${score.model_type.toUpperCase()}`
+                        : ""}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(
+                        score?.timestamp ||
+                        stream.last_prediction?.timestamp ||
+                        Date.now(),
+                      ).toLocaleTimeString()}
+                    </p>
+                  </div>
                 )}
               </div>
             )}

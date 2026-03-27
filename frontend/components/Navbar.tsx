@@ -2,10 +2,10 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-  Shield,
   Upload,
   BarChart3,
   Video,
@@ -37,6 +37,20 @@ export default function Navbar() {
   const { pendingCount, isConnected, clearPending } = useAlerts();
   const { user, isAuthenticated, logout, isLoading } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isLogoSpinningOnLoad, setIsLogoSpinningOnLoad] = useState(true);
+  const [isLogoHovered, setIsLogoHovered] = useState(false);
+
+  useEffect(() => {
+    if (document.readyState === "complete") {
+      setIsLogoSpinningOnLoad(false);
+      return;
+    }
+
+    const handleWindowLoad = () => setIsLogoSpinningOnLoad(false);
+    window.addEventListener("load", handleWindowLoad);
+
+    return () => window.removeEventListener("load", handleWindowLoad);
+  }, []);
 
   // Clear pending count when navigating to alerts page
   useEffect(() => {
@@ -59,9 +73,36 @@ export default function Navbar() {
           <Link href="/" className="flex items-center space-x-3">
             <motion.div
               className="relative"
+              onHoverStart={() => setIsLogoHovered(true)}
+              onHoverEnd={() => setIsLogoHovered(false)}
+              style={{ transformOrigin: "50% 50%" }}
+              animate={
+                isLogoSpinningOnLoad || isLogoHovered
+                  ? { rotate: 360 }
+                  : { rotate: 0 }
+              }
+              transition={
+                isLogoSpinningOnLoad || isLogoHovered
+                  ? {
+                      duration: 1.1,
+                      ease: "linear",
+                      repeat: Infinity,
+                    }
+                  : {
+                      type: "spring",
+                      stiffness: 80,
+                      damping: 16,
+                    }
+              }
             >
-              <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
-                <Shield className="w-6 h-6 text-cyan-400" />
+              <div className="w-10 h-10 flex items-center justify-center overflow-hidden">
+                <Image
+                  src="/assets/logo.png"
+                  alt="SafeSight Logo"
+                  width={100}
+                  height={100}
+                  className="object-contain"
+                />
               </div>
             </motion.div>
             <div>

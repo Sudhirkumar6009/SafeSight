@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Shield, Loader2, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { authService } from "@/services/authService";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -72,8 +73,14 @@ export default function AuthCallbackPage() {
       >
         {/* Logo */}
         <div className="inline-flex items-center gap-3 mb-8">
-          <div className="w-12 h-12 bg-cyan-500/20 rounded-xl flex items-center justify-center">
-            <Shield className="w-6 h-6 text-cyan-400" />
+          <div className="w-12 h-12 bg-cyan-500/20 rounded-xl flex items-center justify-center overflow-hidden">
+            <Image
+              src="/assets/logo.png"
+              alt="SafeSight Logo"
+              width={32}
+              height={32}
+              className="object-contain"
+            />
           </div>
           <span className="text-2xl font-bold text-white">
             Safe<span className="text-cyan-400">Sight</span>

@@ -15,6 +15,11 @@ export const metadata: Metadata = {
     "deep learning",
     "machine learning",
   ],
+  icons: {
+    icon: "/assets/logo.png",
+    shortcut: "/assets/logo.png",
+    apple: "/assets/logo.png",
+  },
 };
 
 export default function RootLayout({
@@ -24,6 +29,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
+      <head>
+        <link rel="icon" href="/assets/logo.png" type="image/png" />
+        <link rel="apple-touch-icon" href="/assets/logo.png" />
+        <meta name="theme-color" content="#ffffff" />
+      </head>
       <body className={`${inter.className} antialiased`}>
         <Providers>
           <div className="min-h-screen bg-grid">{children}</div>

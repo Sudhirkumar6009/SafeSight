@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import Image from "next/image";
 
 export default function Loading() {
   const [loadingText, setLoadingText] = useState("Loading");
@@ -18,52 +19,48 @@ export default function Loading() {
   }, []);
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Blur Background Overlay */}
+      <div className="absolute inset-0 bg-secondary-900/80 backdrop-blur-sm" />
+
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="flex flex-col items-center gap-8"
+        className="relative flex flex-col items-center gap-8 z-10"
       >
         {/* Animated Logo */}
         <div className="relative">
+          {/* Spinning Logo */}
           <motion.div
             animate={{
-              scale: [1, 1.1, 1],
-              rotate: [0, 180, 360],
+              rotate: [0, 360],
             }}
             transition={{
               duration: 2,
               repeat: Infinity,
-              ease: "easeInOut",
+              ease: "linear",
             }}
-            className="w-20 h-20 bg-primary-600 rounded-2xl flex items-center justify-center shadow-glow"
+            className="relative w-24 h-24"
           >
-            <svg
-              className="w-10 h-10 text-white"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-              />
-            </svg>
+            <Image
+              src="/assets/logo.png"
+              alt="SafeSight Logo"
+              fill
+              className="object-contain"
+              priority
+            />
           </motion.div>
 
-          {/* Pulse rings */}
+          {/* Pulse rings around logo */}
           <motion.div
-            animate={{ scale: [1, 1.5], opacity: [0.5, 0] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-            className="absolute inset-0 w-20 h-20 bg-primary-500 rounded-2xl"
+            animate={{ scale: [1, 1.8], opacity: [0.6, 0] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
+            className="absolute inset-0 w-24 h-24 border-4 border-primary-500 rounded-full"
+          />
+          <motion.div
+            animate={{ scale: [1, 2], opacity: [0.4, 0] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut", delay: 0.3 }}
+            className="absolute inset-0 w-24 h-24 border-2 border-primary-400 rounded-full"
           />
         </div>
 

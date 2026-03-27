@@ -14,3 +14,10 @@ aiofiles>=23.2.0
 timm>=0.9.0
 einops>=0.7.0
 scipy>=1.11.0
+
+# ONNX Runtime for optimized inference
+onnxruntime>=1.16.0
+onnx>=1.15.0
+
+# For ONNX conversion from Keras (optional)
+tf2onnx>=1.16.0

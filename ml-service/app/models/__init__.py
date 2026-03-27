@@ -1,3 +1,2 @@
-from .model_loader import model_manager, VideoClassificationModel, ModelManager
-
-__all__ = ["model_manager", "VideoClassificationModel", "ModelManager"]
+# Models module - ONNX only
+# The model loader functionality is now in app.inference.onnx_detector

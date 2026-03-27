@@ -33,6 +33,19 @@ export interface InferenceResponse {
   error?: string;
 }
 
+type RawInferenceResponse = Omit<
+  InferenceResponse,
+  "classification" | "probabilities"
+> & {
+  classification?: string;
+  probabilities?: {
+    violence?: number;
+    nonViolence?: number;
+    non_violence?: number;
+    normal?: number;
+  };
+};
+
 export interface ModelLoadRequest {
   modelPath: string;
   architecture: string;
@@ -205,11 +218,11 @@ class MLServiceClient {
       );
 
       // Use path-based inference for local services
-      const response = await this.client.post<InferenceResponse>(
+      const response = await this.client.post<RawInferenceResponse>(
         "/inference/predict",
         request,
       );
-      return response.data;
+      return this.normalizeInferenceResponse(response.data);
     } catch (error: any) {
       // Capture detailed error from ML service response
       const mlServiceError =
@@ -262,7 +275,7 @@ class MLServiceClient {
 
       logger.info(`Uploading video to remote ML service: ${filename}`);
 
-      const response = await axios.post<InferenceResponse>(
+      const response = await axios.post<RawInferenceResponse>(
         `${this.baseUrl}/inference/predict-upload`,
         formData,
         {
@@ -275,7 +288,7 @@ class MLServiceClient {
         },
       );
 
-      return response.data;
+      return this.normalizeInferenceResponse(response.data);
     } catch (error: any) {
       logger.error("Inference with upload failed:", error.message);
       return {
@@ -303,6 +316,56 @@ class MLServiceClient {
       logger.error("Failed to unload model:", error.message);
       return false;
     }
+  }
+
+  private normalizeClassification(label?: string): "violence" | "non-violence" {
+    const normalized = (label || "").trim().toLowerCase();
+
+    if (normalized === "violence" || normalized === "violent") {
+      return "violence";
+    }
+
+    if (
+      normalized === "non-violence" ||
+      normalized === "non_violence" ||
+      normalized === "non violence" ||
+      normalized === "normal" ||
+      normalized === "safe"
+    ) {
+      return "non-violence";
+    }
+
+    logger.warn(
+      `Unknown ML classification label "${label}". Falling back to non-violence.`,
+    );
+    return "non-violence";
+  }
+
+  private normalizeInferenceResponse(
+    response: RawInferenceResponse,
+  ): InferenceResponse {
+    const classification = this.normalizeClassification(
+      response.classification,
+    );
+    const probabilities = response.probabilities || {};
+    const nonViolenceProbability =
+      probabilities.nonViolence ??
+      probabilities.non_violence ??
+      probabilities.normal ??
+      0;
+
+    return {
+      success: response.success,
+      classification,
+      confidence: response.confidence,
+      probabilities: {
+        violence: probabilities.violence ?? 0,
+        nonViolence: nonViolenceProbability,
+      },
+      metrics: response.metrics,
+      frameAnalysis: response.frameAnalysis,
+      error: response.error,
+    };
   }
 }
 

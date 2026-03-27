@@ -355,7 +355,14 @@ class StreamManager:
                     "violence_score": result.violence_score,
                     "non_violence_score": result.non_violence_score,
                     "is_violent": result.is_violent,
-                    "timestamp": result.timestamp.isoformat()
+                    "timestamp": result.timestamp.isoformat(),
+                    # Enhanced inference metrics (from ONNX migration)
+                    "inference_time_ms": result.inference_time_ms,
+                    "raw_score": result.raw_score,
+                    "stabilized_score": result.stabilized_score,
+                    "is_confirmed": result.is_confirmed,
+                    "is_camera_shake": result.is_camera_shake,
+                    "is_stable": result.is_stable,
                 }
             })
     

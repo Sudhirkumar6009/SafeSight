@@ -1,6 +1,7 @@
 # RTSP Live Stream Service - Dependencies
 # ==========================================
 # GPU-OPTIMIZED VERSION FOR REAL-TIME PERFORMANCE
+# Supports 10-15 cameras with ultra-low latency WebRTC
 
 # Web Framework
 fastapi==0.109.0
@@ -12,11 +13,14 @@ opencv-python==4.9.0.80
 numpy==1.26.3
 av==11.0.0  # PyAV for FFmpeg bindings
 
-# ML Inference with GPU Support
-# Use tensorflow[and-cuda] for GPU support on Linux
-# On Windows, install tensorflow and CUDA Toolkit separately
-tensorflow==2.15.0
-keras==3.0.0
+# ML Inference - ONNX Runtime (Primary - faster and more portable)
+onnxruntime>=1.16.0
+onnx>=1.15.0
+
+# TensorFlow/Keras (Fallback for legacy .h5 models)
+# Uncomment if you need to use legacy Keras models
+# tensorflow==2.15.0
+# keras==3.0.0
 
 # For TensorRT optimization (optional, uncomment if using TensorRT)
 # tensorrt
@@ -36,6 +40,9 @@ python-dotenv==1.0.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
 
+# Security & Encryption
+cryptography==42.0.0  # AES-256 encryption for secure clip storage
+
 # WebSocket for real-time updates
 websockets==12.0
 
@@ -44,6 +51,10 @@ apscheduler==3.10.4
 
 # Logging
 loguru==0.7.2
+
+# System monitoring (for adaptive load control)
+psutil==5.9.8
+GPUtil==1.4.0  # GPU monitoring (optional, gracefully fails if no GPU)
 
 # Testing
 pytest==7.4.4

@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
-import { Shield } from "lucide-react";
 import { motion } from "framer-motion";
 // Tab type
 export type TabId =
@@ -220,35 +220,71 @@ interface DashboardSidebarProps {
 
 export function DashboardSidebar({
   activeTab = "dashboard",
-  onTabChange = () => { },
+  onTabChange = () => {},
 }: DashboardSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [isLogoHovered, setIsLogoHovered] = useState(false);
+  const [isLogoSpinningOnLoad, setIsLogoSpinningOnLoad] = useState(true);
   const { user, logout } = useAuth();
+  useEffect(() => {
+    if (document.readyState === "complete") {
+      setIsLogoSpinningOnLoad(false);
+      return;
+    }
 
+    const handleWindowLoad = () => setIsLogoSpinningOnLoad(false);
+    window.addEventListener("load", handleWindowLoad);
+
+    return () => window.removeEventListener("load", handleWindowLoad);
+  }, []);
   return (
     <aside
-      className={`fixed left-0 top-0 h-screen flex flex-col transition-all duration-300 z-40 ${collapsed ? "w-20" : "w-64"
-        } bg-slate-950 border-r border-slate-800`}
+      className={`fixed left-0 top-0 h-screen flex flex-col transition-all duration-300 z-40 ${
+        collapsed ? "w-20" : "w-64"
+      } bg-slate-950 border-r border-slate-800`}
     >
       {/* Logo */}
       <div className="p-4 border-b border-slate-800">
         <Link href="/" className="flex items-center space-x-3">
           <motion.div
             className="relative"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+            onHoverStart={() => setIsLogoHovered(true)}
+            onHoverEnd={() => setIsLogoHovered(false)}
+            style={{ transformOrigin: "50% 50%" }}
+            animate={
+              isLogoSpinningOnLoad || isLogoHovered
+                ? { rotate: 360 }
+                : { rotate: 0 }
+            }
+            transition={
+              isLogoSpinningOnLoad || isLogoHovered
+                ? {
+                    duration: 1.1,
+                    ease: "linear",
+                    repeat: Infinity,
+                  }
+                : {
+                    type: "spring",
+                    stiffness: 80,
+                    damping: 16,
+                  }
+            }
           >
-            <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
-              <Shield className="w-6 h-6 text-cyan-400" />
+            <div className="w-10 h-10 flex items-center justify-center overflow-hidden">
+              <Image
+                src="/assets/logo.png"
+                alt="SafeSight Logo"
+                width={100}
+                height={100}
+                className="object-contain"
+              />
             </div>
           </motion.div>
-          {!collapsed && (
-            <div>
-              <span className="text-xl font-bold text-white">
-                Safe<span className="text-cyan-400">Sight</span>
-              </span>
-            </div>
-          )}
+          <div>
+            <span className="text-xl font-bold text-white">
+              Safe<span className="text-cyan-400">Sight</span>
+            </span>
+          </div>
         </Link>
       </div>
 
@@ -261,11 +297,13 @@ export function DashboardSidebar({
             <button
               key={item.id}
               onClick={() => onTabChange(item.id)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left ${collapsed ? "justify-center" : ""
-                } ${active
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left ${
+                collapsed ? "justify-center" : ""
+              } ${
+                active
                   ? "bg-cyan-500/10 text-cyan-400 font-medium"
                   : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
-                }`}
+              }`}
               title={collapsed ? item.name : undefined}
             >
               <Icon />
@@ -286,11 +324,13 @@ export function DashboardSidebar({
               <button
                 key={item.id}
                 onClick={() => onTabChange(item.id)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left ${collapsed ? "justify-center" : ""
-                  } ${active
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left ${
+                  collapsed ? "justify-center" : ""
+                } ${
+                  active
                     ? "bg-cyan-500/10 text-cyan-400 font-medium"
                     : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
-                  }`}
+                }`}
                 title={collapsed ? item.name : undefined}
               >
                 <Icon />
@@ -328,8 +368,9 @@ export function DashboardSidebar({
 
         <button
           onClick={logout}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full ${collapsed ? "justify-center" : ""
-            } text-red-400 hover:bg-red-500/10`}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full ${
+            collapsed ? "justify-center" : ""
+          } text-red-400 hover:bg-red-500/10`}
           title={collapsed ? "Sign Out" : undefined}
         >
           <LogoutIcon />
@@ -338,8 +379,9 @@ export function DashboardSidebar({
 
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full mt-2 ${collapsed ? "justify-center" : ""
-            } text-slate-500 hover:bg-slate-900 hover:text-slate-300`}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full mt-2 ${
+            collapsed ? "justify-center" : ""
+          } text-slate-500 hover:bg-slate-900 hover:text-slate-300`}
         >
           <CollapseIcon collapsed={collapsed} />
           {!collapsed && <span>Collapse</span>}

@@ -50,23 +50,40 @@ class Settings(BaseSettings):
     shake_confirmation_seconds: float = Field(default=4.0, alias="SHAKE_CONFIRMATION_SECONDS")  # Require 4s sustained for confirmation
     shake_score_penalty: float = Field(default=0.6, alias="SHAKE_SCORE_PENALTY")  # Reduce score by 40% during shake
     
-    # Storage
-    clips_dir: str = Field(default="./clips", alias="CLIPS_DIR")
+    # Storage - User-defined path for video clips (on user's device)
+    # This should be an absolute path on the user's machine
+    # Example: C:\Users\John\SafeSightData or /home/john/safesight_data
+    storage_base_path: str = Field(default="./data", alias="STORAGE_BASE_PATH")
+    clips_dir: str = Field(default="./clips", alias="CLIPS_DIR")  # Legacy, will be deprecated
     clips_retention_days: int = Field(default=7, alias="CLIPS_RETENTION_DAYS")
     
-    # Database - PostgreSQL (production) or SQLite (development)
+    # Database - PostgreSQL for surveillance data
     # PostgreSQL: postgresql://user:password@localhost:5432/safesight
-    # SQLite: sqlite+aiosqlite:///./events.db
     database_url: str = Field(
         default="postgresql://postgres:password@localhost:5432/violencesense",
         alias="DATABASE_URL"
     )
     
+    # MongoDB - For user authentication
+    # MongoDB: mongodb://localhost:27017/safesight_auth
+    mongodb_url: str = Field(
+        default="mongodb://localhost:27017",
+        alias="MONGODB_URL"
+    )
+    mongodb_database: str = Field(default="safesight_auth", alias="MONGODB_DATABASE")
+    
+    # JWT Settings for authentication
+    jwt_secret_key: str = Field(default="your-secret-key-change-in-production", alias="JWT_SECRET_KEY")
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    jwt_access_token_expire_minutes: int = Field(default=30, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
+    jwt_refresh_token_expire_days: int = Field(default=7, alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
+    
     # Backend Service (for forwarding events)
     backend_url: str = Field(default="http://localhost:5000", alias="BACKEND_URL")
     
-    # Model Path
-    model_path: Optional[str] = Field(default="../ml-service/models/violence_model_legacy.h5", alias="MODEL_PATH")
+    # Model Path - ONNX model (primary) or legacy Keras .h5 (fallback)
+    model_path: Optional[str] = Field(default="../ml-service/models/violence_model.onnx", alias="MODEL_PATH")
+    model_type: str = Field(default="onnx", alias="MODEL_TYPE")  # "onnx" or "keras"
     
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
@@ -77,10 +94,37 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
         extra = "ignore"
     
+    @property
+    def clips_storage_path(self) -> Path:
+        """Get the full path for clips storage."""
+        return Path(self.storage_base_path) / "clips"
+    
+    @property
+    def thumbnails_storage_path(self) -> Path:
+        """Get the full path for thumbnails storage."""
+        return Path(self.storage_base_path) / "thumbnails"
+    
+    @property
+    def temp_storage_path(self) -> Path:
+        """Get the full path for temporary files."""
+        return Path(self.storage_base_path) / "temp"
+    
     def ensure_directories(self):
-        """Create required directories if they don't exist."""
-        Path(self.clips_dir).mkdir(parents=True, exist_ok=True)
+        """
+        Create required directories if they don't exist.
+        NOTE: Only creates temp and logs directories.
+        Clips/thumbnails are stored in ENCRYPTED secure storage (C:\ProgramData\SafeSight\)
+        """
+        # Only create temp directory (needed for temporary video encoding)
+        self.temp_storage_path.mkdir(parents=True, exist_ok=True)
+        
+        # Logs directory
         Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
+    
+    def ensure_legacy_directories(self):
+        """Create legacy directories only when needed as fallback."""
+        self.clips_storage_path.mkdir(parents=True, exist_ok=True)
+        self.thumbnails_storage_path.mkdir(parents=True, exist_ok=True)
 
 
 # Global settings instance

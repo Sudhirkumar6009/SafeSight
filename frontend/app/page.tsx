@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-  Shield,
   Video,
   Brain,
   Activity,
@@ -19,10 +19,6 @@ import {
   Upload,
   Eye,
   Zap,
-  Github,
-  Twitter,
-  Linkedin,
-  Mail,
   ArrowRight,
   Terminal,
   Radio,
@@ -42,11 +38,23 @@ export default function Home() {
   const router = useRouter();
   const { isAuthenticated } = useAuth();
   const [stats, setStats] = useState<PredictionStats | null>(null);
+  const [isLogoHovered, setIsLogoHovered] = useState(false);
+  const [isLogoSpinningOnLoad, setIsLogoSpinningOnLoad] = useState(true);
   const [health, setHealth] = useState<HealthStatus>({
     mongodb: false,
     mlService: false,
   });
+  useEffect(() => {
+    if (document.readyState === "complete") {
+      setIsLogoSpinningOnLoad(false);
+      return;
+    }
 
+    const handleWindowLoad = () => setIsLogoSpinningOnLoad(false);
+    window.addEventListener("load", handleWindowLoad);
+
+    return () => window.removeEventListener("load", handleWindowLoad);
+  }, []);
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -79,13 +87,15 @@ export default function Home() {
     ? stats.avgInferenceTime.toFixed(0)
     : "12";
   const totalAnalyses = stats?.total || 0;
+  const footerHref = (dashboardPath: string, publicPath: string) =>
+    isAuthenticated ? dashboardPath : publicPath;
 
   return (
     <div className="min-h-screen bg-black">
       <Navbar />
 
       {/* Hero Section */}
-      <main className="max-w-7xl mx-auto px-6 pt-10 pb-16">
+      <main className="max-w-7xl mx-auto px-6 pb-16">
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-16 items-center">
           {/* Left Content */}
           <div className="lg:col-span-2">
@@ -98,7 +108,7 @@ export default function Home() {
               <span className="text-xs tracking-[0.3em] text-gray-500 uppercase font-medium mt-10">
                 Next-Gen Security Intelligence
               </span>
-              <div className="flex-1 h-px bg-gray-800" />
+              <div className="flex-1 mt-10 h-[2px] bg-gray-800" />
             </motion.div>
 
             {/* Main Heading */}
@@ -335,126 +345,214 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-gray-900 bg-black">
-        <div className="max-w-7xl mx-auto px-6 py-12">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
-            {/* Brand */}
-            <div className="md:col-span-2">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-cyan-500/20 rounded-lg flex items-center justify-center">
-                  <Shield className="w-5 h-5 text-cyan-400" />
+      <footer className="border-t border-cyan-500/20 bg-black">
+        <div className="max-w-7xl mx-auto px-6 py-14">
+          <div className="rounded-3xl border border-cyan-500/20 bg-gray-950/80 backdrop-blur-sm p-8 md:p-10">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+              {/* Brand + CTA */}
+              <div className="lg:col-span-5">
+                <div className="flex items-center gap-3 mb-5">
+                  <motion.div
+                    className="relative"
+                    onHoverStart={() => setIsLogoHovered(true)}
+                    onHoverEnd={() => setIsLogoHovered(false)}
+                    style={{ transformOrigin: "50% 50%" }}
+                    animate={
+                      isLogoSpinningOnLoad || isLogoHovered
+                        ? { rotate: 360 }
+                        : { rotate: 0 }
+                    }
+                    transition={
+                      isLogoSpinningOnLoad || isLogoHovered
+                        ? {
+                            duration: 1.1,
+                            ease: "linear",
+                            repeat: Infinity,
+                          }
+                        : {
+                            type: "spring",
+                            stiffness: 80,
+                            damping: 16,
+                          }
+                    }
+                  >
+                    <div className="w-10 h-10 flex items-center justify-center overflow-hidden">
+                      <Image
+                        src="/assets/logo.png"
+                        alt="SafeSight Logo"
+                        width={100}
+                        height={100}
+                        className="object-contain"
+                      />
+                    </div>
+                  </motion.div>
+                  <div>
+                    <p className="text-xs tracking-[0.25em] uppercase text-cyan-500/80">
+                      Agentic Security
+                    </p>
+                    <span className="text-2xl font-bold text-white">
+                      SafeSight
+                    </span>
+                  </div>
                 </div>
-                <span className="text-xl font-bold text-white">
-                  SafeSight
-                </span>
+                <p className="text-gray-400 leading-relaxed max-w-md mb-7">
+                  Built for continuous intelligence loops: observe, detect,
+                  decide, and alert in real time with robust AI video analysis.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  <Link
+                    href={
+                      isAuthenticated
+                        ? "/dashboard"
+                        : "/login?redirect=/dashboard"
+                    }
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-cyan-500 text-black font-semibold rounded-lg hover:bg-cyan-400 transition-colors"
+                  >
+                    Open Dashboard
+                    <ArrowRight className="w-4 h-4" />
+                  </Link>
+                  {isAuthenticated ? (
+                    <Link
+                      href="/dashboard?tab=streams"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 border border-gray-700 text-gray-200 rounded-lg hover:border-cyan-500/40 hover:text-cyan-300 transition-colors"
+                    >
+                      Open Streams
+                    </Link>
+                  ) : (
+                    <Link
+                      href="/register"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 border border-gray-700 text-gray-200 rounded-lg hover:border-cyan-500/40 hover:text-cyan-300 transition-colors"
+                    >
+                      Create Account
+                    </Link>
+                  )}
+                </div>
               </div>
-              <p className="text-gray-500 max-w-sm leading-relaxed">
-                Advanced AI-powered violence detection system for real-time
-                video analysis and security monitoring.
+
+              {/* Navigation */}
+              <div className="lg:col-span-3">
+                <h4 className="text-white font-semibold mb-4">Platform</h4>
+                <ul className="space-y-3">
+                  <li>
+                    <Link
+                      href={footerHref("/dashboard?tab=upload", "/upload")}
+                      className="text-gray-400 hover:text-cyan-300 transition-colors"
+                    >
+                      Upload Analysis
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      href={footerHref("/dashboard?tab=streams", "/streams")}
+                      className="text-gray-400 hover:text-cyan-300 transition-colors"
+                    >
+                      Live Streams
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      href={footerHref(
+                        "/dashboard?tab=history",
+                        "/predictions",
+                      )}
+                      className="text-gray-400 hover:text-cyan-300 transition-colors"
+                    >
+                      Prediction Logs
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      href={footerHref("/dashboard?tab=alerts", "/alerts")}
+                      className="text-gray-400 hover:text-cyan-300 transition-colors"
+                    >
+                      Alert Center
+                    </Link>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Resources */}
+              <div className="lg:col-span-2">
+                <h4 className="text-white font-semibold mb-4">Resources</h4>
+                <ul className="space-y-3">
+                  <li>
+                    <Link
+                      href={footerHref("/dashboard?tab=videos", "/videos")}
+                      className="text-gray-400 hover:text-cyan-300 transition-colors"
+                    >
+                      Video Library
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      href={footerHref("/dashboard?tab=settings", "/model")}
+                      className="text-gray-400 hover:text-cyan-300 transition-colors"
+                    >
+                      Model Details
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      href={footerHref("/dashboard?tab=settings", "/settings")}
+                      className="text-gray-400 hover:text-cyan-300 transition-colors"
+                    >
+                      System Settings
+                    </Link>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="mt-10 pt-6 border-t border-gray-800 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+              <p className="text-gray-500 text-sm">
+                2026 SafeSight. Real-time AI vigilance for modern
+                infrastructure.
               </p>
-            </div>
-
-            {/* Quick Links */}
-            <div>
-              <h4 className="text-white font-semibold mb-4">Quick Links</h4>
-              <ul className="space-y-3">
-                <li>
-                  <Link
-                    href="/upload"
-                    className="text-gray-500 hover:text-cyan-400 transition-colors"
-                  >
-                    Upload Video
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/streams"
-                    className="text-gray-500 hover:text-cyan-400 transition-colors"
-                  >
-                    Live Streams
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/predictions"
-                    className="text-gray-500 hover:text-cyan-400 transition-colors"
-                  >
-                    Predictions
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/model"
-                    className="text-gray-500 hover:text-cyan-400 transition-colors"
-                  >
-                    Model Info
-                  </Link>
-                </li>
-              </ul>
-            </div>
-
-            {/* Resources */}
-            <div>
-              <h4 className="text-white font-semibold mb-4">Resources</h4>
-              <ul className="space-y-3">
-                <li>
-                  <Link
-                    href="/videos"
-                    className="text-gray-500 hover:text-cyan-400 transition-colors"
-                  >
-                    Video Library
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/alerts"
-                    className="text-gray-500 hover:text-cyan-400 transition-colors"
-                  >
-                    Alert History
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/settings"
-                    className="text-gray-500 hover:text-cyan-400 transition-colors"
-                  >
-                    Settings
-                  </Link>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Bottom Bar */}
-          <div className="pt-8 border-t border-gray-900 flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-gray-600 text-sm">
-              2025 SafeSight. All rights reserved.
-            </p>
-            <div className="flex items-center gap-4">
-              <a
-                href="#"
-                className="text-gray-600 hover:text-cyan-400 transition-colors"
-              >
-                <Github className="w-5 h-5" />
-              </a>
-              <a
-                href="#"
-                className="text-gray-600 hover:text-cyan-400 transition-colors"
-              >
-                <Twitter className="w-5 h-5" />
-              </a>
-              <a
-                href="#"
-                className="text-gray-600 hover:text-cyan-400 transition-colors"
-              >
-                <Linkedin className="w-5 h-5" />
-              </a>
-              <a
-                href="#"
-                className="text-gray-600 hover:text-cyan-400 transition-colors"
-              >
-                <Mail className="w-5 h-5" />
-              </a>
+              <div className="flex items-center gap-6 text-sm">
+                {isAuthenticated ? (
+                  <>
+                    <Link
+                      href="/dashboard"
+                      className="text-gray-500 hover:text-cyan-300 transition-colors"
+                    >
+                      Dashboard
+                    </Link>
+                    <Link
+                      href="/dashboard?tab=profile"
+                      className="text-gray-500 hover:text-cyan-300 transition-colors"
+                    >
+                      Profile
+                    </Link>
+                    <Link
+                      href="/dashboard?tab=settings"
+                      className="text-gray-500 hover:text-cyan-300 transition-colors"
+                    >
+                      Settings
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      href="/login"
+                      className="text-gray-500 hover:text-cyan-300 transition-colors"
+                    >
+                      Sign In
+                    </Link>
+                    <Link
+                      href="/register"
+                      className="text-gray-500 hover:text-cyan-300 transition-colors"
+                    >
+                      Register
+                    </Link>
+                    <Link
+                      href="/login?redirect=/dashboard"
+                      className="text-gray-500 hover:text-cyan-300 transition-colors"
+                    >
+                      Dashboard
+                    </Link>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>

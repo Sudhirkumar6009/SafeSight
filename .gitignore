@@ -172,24 +172,88 @@ jspm_packages/
 client_secret*.json
 **/client_secret*.json
 
-# Uploaded files
-uploads/
+# ====================================================
+# VIDEO/MEDIA FILES - NEVER COMMIT SURVEILLANCE DATA
+# ====================================================
+# Video clips
 *.mp4
 *.avi
 *.mov
 *.mkv
+*.webm
+*.ts
+*.m4v
+*.flv
+*.wmv
 
+# Image files (thumbnails, frames)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# Encrypted storage files (no extension)
+# Note: These are stored outside project dir anyway
+
+# Storage directories
+storage/
+clips/
+thumbnails/
+data/clips/
+data/thumbnails/
+data/temp/
+face_participants/
+
+# Secure storage (should be outside project, but just in case)
+.safesight_storage/
+.cctv_secure_storage/
+secure_storage/
+
+# ====================================================
+# SENSITIVE FILES
+# ====================================================
+# Encryption keys - CRITICAL: Never commit
+*.key
+*.keyfile
+.keyfile
+encryption_key*
+*.pem
+*.crt
+
+# Database dumps
+*.sql
+*.dump
+*.bak
+
+# Credentials
+credentials*.json
+secrets*.json
+*.secrets
+
+# ====================================================
+# MODEL FILES
+# ====================================================
 # Model files (only root models/ folder, not src/models/)
 /models/
 *.pth
 *.pt
 *.onnx
 *.h5
+*.pb
+*.tflite
+*.caffemodel
 
+# ====================================================
+# TEMPORARY/MISC
+# ====================================================
 # Temporary files
 tmp/
 temp/
 *.tmp
+*.temp
 
 # Coverage
 coverage/
@@ -197,3 +261,6 @@ coverage/
 # Vercel
 .vercel
 nul
+
+# Uploaded files
+uploads/

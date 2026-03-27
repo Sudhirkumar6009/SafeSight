@@ -253,16 +253,18 @@ class StreamIngestion:
         """Build URL with FFmpeg hardware decode options for low-latency streaming."""
         import os
         
-        # Set FFmpeg environment for minimal-latency decoding
+        # Set FFmpeg environment optimized for mobile hotspot/WiFi networks
         # TCP is more reliable than UDP (no packet loss / reordering)
         os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = (
             'rtsp_transport;tcp|'        # TCP for reliable, ordered delivery
             'fflags;nobuffer+discardcorrupt|'  # No input buffering, drop corrupt
             'flags;low_delay|'           # Enable low delay mode
-            'analyzeduration;500000|'    # Minimal stream analysis (0.5s)
-            'probesize;500000|'          # Minimal probe size
-            'max_delay;0|'              # No reordering delay
-            'reorder_queue_size;0'       # No reorder queue
+            'analyzeduration;1000000|'   # 1s stream analysis (more time for slow networks)
+            'probesize;500000|'          # 500KB probe size
+            'max_delay;500000|'          # Allow 500ms delay for network jitter
+            'reorder_queue_size;10|'     # Small reorder queue for WiFi packet loss
+            'stimeout;60000000|'         # 60s socket timeout
+            'timeout;60000000'           # 60s connection timeout
         )
         
         return url

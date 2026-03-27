@@ -13,7 +13,7 @@ import json
 import subprocess
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Any, Dict, List, Optional, Tuple, Callable, Union
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from collections import deque
@@ -36,9 +36,16 @@ from app.detection.face_extractor import get_face_extractor
 # Import database modules for persistence
 from app.database import (
     init_db, async_session, 
-    Event, Stream as DBStream, EventStatus, AlertSeverity
+    Event, Stream as DBStream, EventStatus, AlertSeverity,
+    VideoClip, ExtractedFace, InferenceLog
 )
 from app.config import settings
+
+# Import storage service for clips and faces
+from app.storage import get_storage_service
+
+# Import encryption service for secure storage
+from app.storage.encryption import get_encryption_service
 
 
 # Configure logging
@@ -47,7 +54,8 @@ logger.add(sys.stderr, level="INFO", format="<green>{time:HH:mm:ss}</green> | <l
 
 
 # ============== Model Configuration ==============
-MODEL_PATH = Path(__file__).parent / ".." / "ml-service" / "models" / "violence_model_legacy.h5"
+MODEL_PATH = Path(__file__).parent / ".." / "ml-service" / "models" / "violence_model.onnx"
+MODEL_PATH_LEGACY = Path(__file__).parent / ".." / "ml-service" / "models" / "violence_model_legacy.h5"
 EXPECTED_FRAMES = 16
 TARGET_SIZE = (224, 224)
 INFERENCE_INTERVAL = float(os.getenv("INFERENCE_INTERVAL", "0.3"))  # Run inference every 0.3 seconds (faster detection)
@@ -63,22 +71,46 @@ CONSECUTIVE_DETECTIONS_REQUIRED = int(os.getenv("CONSECUTIVE_DETECTIONS_REQUIRED
 CLIP_BUFFER_SECONDS = int(os.getenv("CLIP_BUFFER_SECONDS", "10"))  # 10s before violence
 CLIP_AFTER_SECONDS = int(os.getenv("CLIP_AFTER_SECONDS", "10"))  # 10s after violence ends
 CLIP_MAX_DURATION = int(os.getenv("CLIP_MAX_DURATION", "60"))  # Max 60s violence duration before force-save
-CLIPS_DIR = Path(os.getenv("CLIPS_DIR", "./clips"))
-CLIPS_DIR.mkdir(exist_ok=True)
-THUMBNAILS_DIR = CLIPS_DIR / "thumbnails"
-THUMBNAILS_DIR.mkdir(exist_ok=True)
+
+# Legacy storage paths (only used as fallback if encryption fails)
+# DO NOT auto-create these directories - secure storage is the primary location
+CLIPS_DIR = settings.clips_storage_path
+THUMBNAILS_DIR = settings.thumbnails_storage_path
+
+# Only create legacy directories when actually needed (in fallback code)
+# NOT on startup - this prevents cluttering the project directory
+
 STREAM_FPS = 30  # Default FPS for clip recording (overridden by actual measured FPS)
 
 
 # ============== Helper Functions ==============
 
-def verify_clip_file(file_path: Optional[str]) -> Optional[str]:
+def verify_clip_file(file_path: Optional[str], check_encrypted: bool = True) -> Optional[str]:
     """
     Return the file path only if the file exists, otherwise return None.
     This ensures we don't return references to deleted files.
+    
+    Checks:
+    1. Encrypted secure storage (primary)
+    2. Legacy clips directory
+    3. Absolute path
+    4. Thumbnails directory
     """
     if not file_path:
         return None
+    
+    # First check encrypted storage (primary storage location for new files)
+    if check_encrypted:
+        try:
+            encryption_service = get_encryption_service()
+            # Check if it's a clip in encrypted storage
+            if encryption_service.get_clip_info(file_path):
+                return file_path
+            # Check if it's a thumbnail in encrypted storage
+            if file_path in encryption_service.manifest.get("thumbnails", {}):
+                return file_path
+        except Exception:
+            pass  # Fall through to legacy checks
     
     # Check in clips directory
     full_path = CLIPS_DIR / file_path
@@ -100,36 +132,128 @@ def verify_clip_file(file_path: Optional[str]) -> Optional[str]:
 # ============== Violence Detection Model ==============
 
 class ViolenceDetector:
-    """Loads and runs the violence detection model."""
+    """
+    Loads and runs the violence detection model.
+    
+    Supports ONNX (primary, faster) and Keras/TensorFlow (fallback).
+    ONNX provides 2-3x faster inference with lower memory usage.
+    """
     
     def __init__(self):
         self.model = None
         self.is_loaded = False
+        self.model_type = "none"  # "onnx", "keras", or "none"
         self._lock = threading.Lock()
+        self._ort = None  # ONNX Runtime
+        self._onnx_session = None
+        self._input_name = None
+        self._output_name = None
         self._load_model()
     
     def _load_model(self):
-        """Load the TensorFlow model."""
-        try:
-            model_path = MODEL_PATH.resolve()
-            if not model_path.exists():
-                logger.warning(f"Model not found at {model_path}")
+        """Load the model, preferring ONNX over Keras."""
+        # Try ONNX first (faster)
+        onnx_path = MODEL_PATH.resolve()
+        if onnx_path.exists() and str(onnx_path).endswith('.onnx'):
+            if self._load_onnx_model(onnx_path):
                 return
+        
+        # Fallback to Keras/TensorFlow
+        keras_path = MODEL_PATH_LEGACY.resolve()
+        if keras_path.exists():
+            self._load_keras_model(keras_path)
+    
+    def _load_onnx_model(self, model_path: Path) -> bool:
+        """Load ONNX model with optimal execution provider."""
+        try:
+            import onnxruntime as ort
+            self._ort = ort
             
+            logger.info(f"Loading ONNX model from {model_path}...")
+            
+            # Get available providers
+            available_providers = ort.get_available_providers()
+            logger.info(f"Available ONNX providers: {available_providers}")
+            
+            # Select providers (prefer GPU)
+            providers = []
+            execution_provider = "CPU"
+            
+            if 'CUDAExecutionProvider' in available_providers:
+                providers.append(('CUDAExecutionProvider', {
+                    'device_id': 0,
+                    'arena_extend_strategy': 'kNextPowerOfTwo',
+                    'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
+                    'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                }))
+                execution_provider = "CUDA"
+            
+            if 'DmlExecutionProvider' in available_providers:
+                providers.append('DmlExecutionProvider')
+                if execution_provider == "CPU":
+                    execution_provider = "DirectML"
+            
+            providers.append('CPUExecutionProvider')
+            
+            # Session options
+            sess_options = ort.SessionOptions()
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            sess_options.intra_op_num_threads = os.cpu_count() or 4
+            sess_options.enable_mem_pattern = True
+            
+            # Create session
+            self._onnx_session = ort.InferenceSession(
+                str(model_path),
+                sess_options=sess_options,
+                providers=providers
+            )
+            
+            self._input_name = self._onnx_session.get_inputs()[0].name
+            self._output_name = self._onnx_session.get_outputs()[0].name
+            
+            self.is_loaded = True
+            self.model_type = "onnx"
+            
+            logger.info(f"✅ ONNX model loaded successfully ({execution_provider})")
+            logger.info(f"  Input: {self._input_name} {self._onnx_session.get_inputs()[0].shape}")
+            logger.info(f"  Output: {self._output_name}")
+            
+            # Warmup
+            dummy = np.zeros((1, EXPECTED_FRAMES, *TARGET_SIZE, 3), dtype=np.float32)
+            self._onnx_session.run([self._output_name], {self._input_name: dummy})
+            logger.info("✅ ONNX model warmup complete")
+            
+            return True
+            
+        except ImportError:
+            logger.warning("ONNX Runtime not installed, falling back to Keras")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to load ONNX model: {e}")
+            return False
+    
+    def _load_keras_model(self, model_path: Path):
+        """Load the TensorFlow/Keras model (fallback)."""
+        try:
             import tensorflow as tf
             from tensorflow import keras
             
-            # Suppress TF warnings
             tf.get_logger().setLevel('ERROR')
             
-            # Try direct load first
             try:
                 self.model = keras.models.load_model(str(model_path), compile=False)
                 self.is_loaded = True
-                logger.info(f"✅ Loaded violence detection model from {model_path}")
+                self.model_type = "keras"
+                logger.info(f"✅ Loaded Keras model from {model_path}")
+                
+                # Warmup
+                dummy = np.zeros((1, EXPECTED_FRAMES, *TARGET_SIZE, 3), dtype=np.float32)
+                self.model.predict(dummy, verbose=0)
+                logger.info("✅ Keras model warmup complete")
                 return
+                
             except Exception as e:
-                logger.warning(f"Direct load failed: {str(e)[:80]}, trying fallback...")
+                logger.warning(f"Direct load failed: {str(e)[:80]}, trying architecture rebuild...")
             
             # Fallback: Build architecture and load weights
             from tensorflow.keras import layers
@@ -150,20 +274,21 @@ class ViolenceDetector:
             self.model = keras.Model(inputs=inputs, outputs=outputs)
             self.model.load_weights(str(model_path))
             self.is_loaded = True
-            logger.info(f"✅ Loaded model weights from {model_path}")
+            self.model_type = "keras"
+            logger.info(f"✅ Loaded Keras model weights from {model_path}")
             
             # Warmup
             dummy = np.zeros((1, EXPECTED_FRAMES, *TARGET_SIZE, 3), dtype=np.float32)
             self.model.predict(dummy, verbose=0)
-            logger.info("✅ Model warmup complete")
+            logger.info("✅ Keras model warmup complete")
             
         except Exception as e:
-            logger.error(f"❌ Failed to load model: {e}")
+            logger.error(f"❌ Failed to load Keras model: {e}")
             self.is_loaded = False
     
     def predict(self, frames: List[np.ndarray]) -> Optional[dict]:
-        """Run prediction on frames."""
-        if not self.is_loaded or self.model is None:
+        """Run prediction on frames using ONNX or Keras."""
+        if not self.is_loaded:
             return None
         
         with self._lock:
@@ -171,9 +296,19 @@ class ViolenceDetector:
                 # Preprocess frames
                 processed = self._preprocess(frames)
                 
-                # Run inference
                 start = time.time()
-                prediction = self.model.predict(processed, verbose=0)
+                
+                if self.model_type == "onnx" and self._onnx_session:
+                    # ONNX inference
+                    outputs = self._onnx_session.run(
+                        [self._output_name],
+                        {self._input_name: processed}
+                    )
+                    prediction = outputs[0]
+                else:
+                    # Keras inference
+                    prediction = self.model.predict(processed, verbose=0)
+                
                 inference_time = (time.time() - start) * 1000
                 
                 # Parse result
@@ -187,7 +322,8 @@ class ViolenceDetector:
                     "non_violence_score": 1.0 - violence_score,
                     "is_violent": violence_score >= VIOLENCE_THRESHOLD,
                     "inference_time_ms": inference_time,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "model_type": self.model_type
                 }
             except Exception as e:
                 logger.error(f"Prediction error: {e}")
@@ -204,7 +340,13 @@ class ViolenceDetector:
         
         processed = []
         for frame in frames:
-            resized = cv2.resize(frame, TARGET_SIZE, interpolation=cv2.INTER_AREA)
+            # Convert BGR to RGB
+            if len(frame.shape) == 3 and frame.shape[2] == 3:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            else:
+                rgb_frame = frame
+            
+            resized = cv2.resize(rgb_frame, TARGET_SIZE, interpolation=cv2.INTER_AREA)
             normalized = resized.astype(np.float32) / 255.0
             processed.append(normalized)
         
@@ -240,7 +382,7 @@ class ViolenceEventState:
     post_buffer_frames: List[Tuple[np.ndarray, float]] = field(default_factory=list)
     clip_path: Optional[str] = None
     thumbnail_path: Optional[str] = None
-    face_paths: List[str] = field(default_factory=list)  # Detected participant faces
+    face_paths: List[Any] = field(default_factory=list)  # Detected participant faces (paths or face data dicts)
 
 
 class EventRecorder:
@@ -375,7 +517,22 @@ class EventRecorder:
         self.violence_start_time = None
     
     def _save_clip(self, event: ViolenceEventState):
-        """Save video clip from collected frames with correct real-time playback speed."""
+        """
+        Save video clip from collected frames with AES-256 encryption.
+        
+        Storage architecture:
+        1. Writes temporary unencrypted clip to temp directory
+        2. Extracts faces from the clip
+        3. Encrypts and saves clip to secure storage
+        4. Encrypts and saves thumbnail to secure storage
+        5. Encrypts and saves faces to secure storage
+        6. Stores metadata in PostgreSQL
+        7. Broadcasts event completion via WebSocket
+        8. Cleans up temporary files
+        """
+        import tempfile
+        from app.storage.encryption import get_encryption_service
+        
         try:
             # Combine all frames: pre-buffer + event + post-buffer
             all_frames = []
@@ -392,7 +549,6 @@ class EventRecorder:
                 return
             
             # Calculate actual FPS from frame timestamps for real-time playback
-            # This prevents the fast-forwarded effect caused by using a hardcoded FPS
             actual_fps = STREAM_FPS  # default fallback
             if len(all_frames) >= 2:
                 first_ts = all_frames[0][1]
@@ -400,98 +556,153 @@ class EventRecorder:
                 elapsed = last_ts - first_ts
                 if elapsed > 0:
                     actual_fps = len(all_frames) / elapsed
-                    # Clamp to reasonable range (5-60 fps)
                     actual_fps = max(5.0, min(60.0, actual_fps))
                     logger.info(f"📊 Measured actual FPS: {actual_fps:.1f} (from {len(all_frames)} frames over {elapsed:.1f}s)")
             
-            # Get frame dimensions from first frame
+            # Get frame dimensions
             first_frame = all_frames[0][0]
             height, width = first_frame.shape[:2]
-            logger.debug(f"Frame dimensions: {width}x{height}")
             
-            # Generate filename
-            timestamp_str = event.start_time.strftime("%Y%m%d_%H%M%S")
-            safe_name = "".join(c if c.isalnum() else "_" for c in event.stream_name)
-            clip_filename = f"{timestamp_str}_{safe_name}_{event.event_id[:8]}.mp4"
-            clip_path = CLIPS_DIR / clip_filename
+            # Create temporary file for video encoding
+            temp_dir = settings.temp_storage_path
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            temp_clip_path = temp_dir / f"temp_{event.event_id[:8]}.mp4"
             
-            # Save thumbnail (middle frame of event, or first event frame if no middle)
-            thumb_filename = f"{timestamp_str}_{safe_name}_{event.event_id[:8]}.jpg"
-            thumb_path = THUMBNAILS_DIR / thumb_filename
+            # Write video to temp file using H.264 codec
+            write_fps = int(round(actual_fps))
+            video_written = False
             
+            for codec in ['avc1', 'H264', 'x264', 'X264', 'mp4v']:
+                try:
+                    fourcc = cv2.VideoWriter_fourcc(*codec)
+                    out = cv2.VideoWriter(str(temp_clip_path), fourcc, write_fps, (width, height))
+                    
+                    if out.isOpened():
+                        for frame, _ in all_frames:
+                            out.write(frame)
+                        out.release()
+                        
+                        if temp_clip_path.exists() and temp_clip_path.stat().st_size > 1000:
+                            video_written = True
+                            break
+                except Exception:
+                    continue
+            
+            if not video_written:
+                logger.error(f"❌ Failed to write temporary video file")
+                return
+            
+            # Read the video file as bytes
+            with open(temp_clip_path, 'rb') as f:
+                video_data = f.read()
+            
+            clip_duration = len(all_frames) / actual_fps
+            file_size = len(video_data)
+            
+            logger.info(f"📹 Temp clip created: {file_size/1024:.1f}KB, {clip_duration:.1f}s")
+            
+            # Create thumbnail from middle frame
             event_start_idx = len(event.pre_buffer_frames)
             event_end_idx = event_start_idx + len(event.event_frames)
             mid_idx = (event_start_idx + event_end_idx) // 2
-            
-            # Ensure we have a valid index for thumbnail
             if mid_idx >= len(all_frames):
                 mid_idx = len(all_frames) // 2
+            
+            thumbnail_data = None
             if mid_idx < len(all_frames):
-                success = cv2.imwrite(str(thumb_path), all_frames[mid_idx][0])
-                if success:
-                    # Store relative path from clips dir (including thumbnails/ subdirectory)
-                    event.thumbnail_path = f"thumbnails/{thumb_filename}"
-                    logger.info(f"📸 Saved thumbnail: {thumb_filename}")
-                else:
-                    logger.error(f"❌ Failed to save thumbnail: {thumb_path}")
+                _, thumbnail_buffer = cv2.imencode('.jpg', all_frames[mid_idx][0], [cv2.IMWRITE_JPEG_QUALITY, 85])
+                thumbnail_data = thumbnail_buffer.tobytes()
             
-            # Use the measured actual FPS for the video writer so playback is real-time
-            write_fps = int(round(actual_fps))
-            
-            # Write video using H.264 codec for browser compatibility
-            fourcc_h264 = cv2.VideoWriter_fourcc(*'avc1')
-            out = cv2.VideoWriter(str(clip_path), fourcc_h264, write_fps, (width, height))
-            
-            if not out.isOpened():
-                # Fallback: try other H.264 fourcc codes
-                for codec in ['H264', 'x264', 'X264']:
-                    fourcc_alt = cv2.VideoWriter_fourcc(*codec)
-                    out = cv2.VideoWriter(str(clip_path), fourcc_alt, write_fps, (width, height))
-                    if out.isOpened():
-                        logger.info(f"Using fallback H.264 codec: {codec}")
-                        break
-            
-            if not out.isOpened():
-                # Last resort: use mp4v (won't play in browsers but at least saves)
-                logger.warning("⚠️ H.264 codecs unavailable, falling back to mp4v (clips won't play in browser)")
-                fourcc_mp4v = cv2.VideoWriter_fourcc(*'mp4v')
-                out = cv2.VideoWriter(str(clip_path), fourcc_mp4v, write_fps, (width, height))
-            
-            if not out.isOpened():
-                logger.error(f"❌ Failed to open VideoWriter for {clip_path}")
-                return
-            
-            frames_written = 0
-            for frame, _ in all_frames:
-                out.write(frame)
-                frames_written += 1
-            
-            out.release()
-            
-            # Verify file was created
-            if not clip_path.exists():
-                logger.error(f"❌ Clip file not created: {clip_path}")
-                return
-            
-            file_size = clip_path.stat().st_size
-            if file_size < 1000:  # Less than 1KB is likely corrupt
-                logger.error(f"❌ Clip file too small ({file_size} bytes): {clip_path}")
-                return
-            
-            # Calculate real duration from timestamps
-            clip_duration = len(all_frames) / actual_fps
-            event.clip_path = clip_filename
-            
-            logger.info(f"✅ Saved clip: {clip_filename} ({clip_duration:.1f}s, {frames_written} frames, {file_size/1024:.1f}KB)")
-            
-            # Extract faces from the saved clip
+            # Extract faces from the temporary clip
+            face_data_list = []
             try:
                 face_extractor = get_face_extractor()
-                event.face_paths = face_extractor.process_clip(str(clip_path), event.event_id)
-                logger.info(f"👤 Extracted {len(event.face_paths)} participant faces")
+                face_data_list = face_extractor.process_clip(str(temp_clip_path), event.event_id)
+                logger.info(f"👤 Extracted {len(face_data_list)} participant faces")
             except Exception as fe:
                 logger.warning(f"Face extraction failed: {fe}")
-                event.face_paths = []
+            
+            # Initialize encryption service and save encrypted files
+            try:
+                encryption_service = get_encryption_service()
+                
+                # Encrypt and save clip
+                secure_clip_filename, clip_hash = encryption_service.encrypt_and_save_clip(
+                    video_data=video_data,
+                    event_id=event.event_id,
+                    stream_id=event.stream_id,
+                    stream_name=event.stream_name,
+                    duration=clip_duration,
+                    metadata={
+                        "width": width,
+                        "height": height,
+                        "fps": actual_fps,
+                        "frame_count": len(all_frames),
+                        "max_score": event.max_score
+                    }
+                )
+                event.clip_path = secure_clip_filename
+                logger.info(f"🔐 Encrypted clip saved: {secure_clip_filename}")
+                
+                # Encrypt and save thumbnail
+                secure_thumb_filename = None
+                if thumbnail_data:
+                    secure_thumb_filename = encryption_service.encrypt_and_save_thumbnail(
+                        image_data=thumbnail_data,
+                        event_id=event.event_id,
+                        stream_id=event.stream_id
+                    )
+                    event.thumbnail_path = secure_thumb_filename
+                    logger.info(f"🔐 Encrypted thumbnail saved: {secure_thumb_filename}")
+                
+                # Encrypt and save faces
+                encrypted_face_refs = []
+                for face_data in face_data_list:
+                    if isinstance(face_data, dict) and 'image_data' in face_data:
+                        secure_face_filename = encryption_service.encrypt_and_save_face(
+                            image_data=face_data['image_data'],
+                            event_id=event.event_id,
+                            face_index=face_data.get('face_index', 0),
+                            bbox=face_data.get('bbox')
+                        )
+                        encrypted_face_refs.append({
+                            "secure_filename": secure_face_filename,
+                            "face_index": face_data.get('face_index', 0),
+                            "bbox": face_data.get('bbox')
+                        })
+                
+                event.face_paths = encrypted_face_refs
+                logger.info(f"🔐 Encrypted {len(encrypted_face_refs)} faces")
+                
+            except Exception as enc_error:
+                logger.error(f"Encryption failed, falling back to unencrypted storage: {enc_error}")
+                # Fallback: save unencrypted to legacy location
+                # Create legacy directories ONLY when needed
+                settings.ensure_legacy_directories()
+                
+                timestamp_str = event.start_time.strftime("%Y%m%d_%H%M%S")
+                safe_name = "".join(c if c.isalnum() else "_" for c in event.stream_name)
+                legacy_clip_filename = f"{timestamp_str}_{safe_name}_{event.event_id[:8]}.mp4"
+                legacy_clip_path = CLIPS_DIR / legacy_clip_filename
+                
+                import shutil
+                shutil.copy(temp_clip_path, legacy_clip_path)
+                event.clip_path = legacy_clip_filename
+                
+                if thumbnail_data:
+                    thumb_path = THUMBNAILS_DIR / f"{timestamp_str}_{safe_name}_{event.event_id[:8]}.jpg"
+                    with open(thumb_path, 'wb') as f:
+                        f.write(thumbnail_data)
+                    event.thumbnail_path = f"thumbnails/{thumb_path.name}"
+            
+            # Clean up temporary file
+            try:
+                if temp_clip_path.exists():
+                    temp_clip_path.unlink()
+            except Exception:
+                pass
+            
+            logger.info(f"✅ Saved encrypted clip for event {event.event_id} ({clip_duration:.1f}s, {file_size/1024:.1f}KB)")
             
             # Broadcast event completion with clip info
             broadcast_event_end(event, clip_duration)
@@ -522,7 +733,24 @@ def broadcast_event_start(event: ViolenceEventState):
 
 def broadcast_event_end(event: ViolenceEventState, clip_duration: float):
     """Broadcast event_end with clip info to WebSocket clients."""
+    import base64
+    
     avg_score = sum(event.frame_scores) / len(event.frame_scores) if event.frame_scores else 0
+    
+    # Process face data for JSON serialization
+    # face_paths contains dicts with 'image_data' (bytes) - convert to base64 for WebSocket
+    serializable_faces = []
+    if event.face_paths:
+        for face in event.face_paths:
+            if isinstance(face, dict):
+                face_copy = face.copy()
+                # Convert bytes to base64 string for JSON serialization
+                if 'image_data' in face_copy and isinstance(face_copy['image_data'], bytes):
+                    face_copy['image_data'] = base64.b64encode(face_copy['image_data']).decode('utf-8')
+                serializable_faces.append(face_copy)
+            elif isinstance(face, str):
+                # Already a path string, keep as-is
+                serializable_faces.append(face)
     
     alert = {
         "type": "violence_alert",
@@ -545,8 +773,8 @@ def broadcast_event_end(event: ViolenceEventState, clip_duration: float):
         "clip_duration": clip_duration,
         "duration": (event.end_time - event.start_time).total_seconds() if event.end_time else 0,
         "duration_seconds": (event.end_time - event.start_time).total_seconds() if event.end_time else 0,
-        "face_paths": event.face_paths,  # Detected participant faces
-        "participants_count": len(event.face_paths),
+        "face_paths": serializable_faces,  # Detected participant faces (base64 encoded)
+        "participants_count": len(event.face_paths) if event.face_paths else 0,
     }
     _broadcast_ws("violence_alert", alert)
     
@@ -565,7 +793,14 @@ MAX_STORED_EVENTS = 100
 
 
 async def store_event_async(event: dict):
-    """Store event in PostgreSQL database."""
+    """
+    Store event in PostgreSQL database along with VideoClip and ExtractedFace records.
+    
+    This function creates:
+    1. Event record - main violence detection event
+    2. VideoClip record - metadata about the saved clip file
+    3. ExtractedFace records - one for each detected face
+    """
     try:
         async with async_session() as session:
             # Get confidence - try multiple field names for compatibility
@@ -590,6 +825,11 @@ async def store_event_async(event: dict):
             stream_id_raw = event.get("stream_id", 0)
             stream_id = int(stream_id_raw) if stream_id_raw else 0
             
+            # Count faces if available
+            face_paths = event.get("face_paths", [])
+            person_count = len(face_paths) if face_paths else 0
+            
+            # Create Event record
             db_event = Event(
                 stream_id=stream_id,
                 stream_name=event.get("stream_name", "Unknown"),
@@ -605,10 +845,122 @@ async def store_event_async(event: dict):
                 clip_path=event.get("clip_path"),
                 clip_duration=event.get("clip_duration"),
                 thumbnail_path=event.get("thumbnail_path"),
+                # Store secure encrypted storage IDs (same as clip_path/thumbnail_path for new events)
+                secure_clip_id=event.get("clip_path"),
+                secure_thumbnail_id=event.get("thumbnail_path"),
+                person_count=person_count,
             )
             session.add(db_event)
+            await session.flush()  # Flush to get the event ID
+            
+            event_id = db_event.id
+            logger.info(f"📝 Event {event_id} stored in database: stream={event.get('stream_name')}, confidence={confidence:.1%}")
+            
+            # Create VideoClip record if clip_path exists
+            clip_path = event.get("clip_path")
+            if clip_path:
+                try:
+                    # Determine the full file path for the clip
+                    encryption_service = get_encryption_service()
+                    full_clip_path = str(encryption_service.clips_path / clip_path) if encryption_service else clip_path
+                    
+                    # Get file size if file exists
+                    file_size = None
+                    clip_file = Path(full_clip_path) if encryption_service else None
+                    if clip_file and clip_file.exists():
+                        file_size = clip_file.stat().st_size
+                    
+                    # Get thumbnail data if available (for inline storage in VideoClip)
+                    thumbnail_data = None
+                    thumbnail_path = event.get("thumbnail_path")
+                    if thumbnail_path and encryption_service:
+                        try:
+                            # Decrypt thumbnail using the encryption service method
+                            thumbnail_data = encryption_service.decrypt_thumbnail(thumbnail_path)
+                        except Exception as thumb_err:
+                            logger.warning(f"Could not read thumbnail for VideoClip: {thumb_err}")
+                    
+                    video_clip = VideoClip(
+                        event_id=event_id,
+                        stream_id=stream_id if stream_id > 0 else None,
+                        filename=clip_path,
+                        file_path=full_clip_path,
+                        file_size_bytes=file_size,
+                        duration_seconds=event.get("clip_duration"),
+                        recorded_at=start_time,
+                        thumbnail_data=thumbnail_data,
+                        thumbnail_mime_type="image/jpeg" if thumbnail_data else None,
+                    )
+                    session.add(video_clip)
+                    await session.flush()  # Flush to get clip ID for faces
+                    
+                    clip_id = video_clip.id
+                    logger.info(f"🎬 VideoClip {clip_id} stored: {clip_path}")
+                    
+                    # Create ExtractedFace records for each detected face
+                    if face_paths:
+                        faces_stored = 0
+                        for idx, face_data in enumerate(face_paths):
+                            try:
+                                # face_data can be a dict with image_data (base64 or bytes) and metadata
+                                if isinstance(face_data, dict):
+                                    # Get image data - may be base64 string or bytes
+                                    image_data = face_data.get("image_data")
+                                    if isinstance(image_data, str):
+                                        # Base64 encoded string - decode it
+                                        import base64
+                                        image_data = base64.b64decode(image_data)
+                                    
+                                    if not image_data:
+                                        # Try to read from secure filename if no inline data
+                                        secure_filename = face_data.get("secure_filename")
+                                        if secure_filename and encryption_service:
+                                            try:
+                                                # Use decrypt_face method instead of manual file access
+                                                image_data = encryption_service.decrypt_face(secure_filename)
+                                            except Exception as read_err:
+                                                logger.warning(f"Could not read face file {secure_filename}: {read_err}")
+                                    
+                                    if not image_data:
+                                        continue
+                                    
+                                    # Extract bounding box
+                                    bbox = face_data.get("bbox", {})
+                                    
+                                    extracted_face = ExtractedFace(
+                                        clip_id=clip_id,
+                                        stream_id=stream_id if stream_id > 0 else None,
+                                        event_id=event_id,
+                                        image_data=image_data,
+                                        image_mime_type="image/jpeg",
+                                        image_size_bytes=len(image_data),
+                                        face_index=face_data.get("face_index", idx),
+                                        confidence=face_data.get("confidence"),
+                                        bbox_x=bbox.get("x"),
+                                        bbox_y=bbox.get("y"),
+                                        bbox_width=bbox.get("width"),
+                                        bbox_height=bbox.get("height"),
+                                        frame_number=face_data.get("frame_number"),
+                                        frame_timestamp_ms=face_data.get("frame_timestamp_ms"),
+                                    )
+                                    session.add(extracted_face)
+                                    faces_stored += 1
+                                    
+                            except Exception as face_err:
+                                logger.warning(f"Failed to store face {idx}: {face_err}")
+                                continue
+                        
+                        if faces_stored > 0:
+                            logger.info(f"👤 {faces_stored} ExtractedFace records stored for clip {clip_id}")
+                    
+                except Exception as clip_err:
+                    logger.warning(f"Failed to create VideoClip record: {clip_err}")
+                    import traceback
+                    traceback.print_exc()
+            
             await session.commit()
-            logger.info(f"📝 Event stored in database: stream={event.get('stream_name')}, confidence={confidence:.1%}, clip={event.get('clip_path')}")
+            logger.info(f"✅ Event {event_id} fully stored with clip and faces")
+            
     except Exception as e:
         logger.error(f"Failed to store event in database: {e}")
         import traceback
@@ -623,6 +975,38 @@ def store_event(event: dict):
     global stored_events
     stored_events.insert(0, event)
     stored_events = stored_events[:MAX_STORED_EVENTS]
+
+
+# ============== Sampled Inference Logging ==============
+
+INFERENCE_LOG_SAMPLE_RATE = 10  # Log every 10th inference
+
+async def log_inference_async(
+    stream_id: int,
+    violence_score: float,
+    non_violence_score: float,
+    inference_time_ms: Optional[float] = None,
+    frame_number: Optional[int] = None
+):
+    """
+    Store an inference result in the database (sampled).
+    Called every N inferences to track trends without overwhelming the database.
+    """
+    try:
+        async with async_session() as session:
+            log_entry = InferenceLog(
+                stream_id=stream_id,
+                timestamp=datetime.utcnow(),
+                violence_score=violence_score,
+                non_violence_score=non_violence_score,
+                inference_time_ms=inference_time_ms,
+                frame_number=frame_number,
+            )
+            session.add(log_entry)
+            await session.commit()
+    except Exception as e:
+        # Don't let logging failures affect inference
+        logger.debug(f"Failed to log inference: {e}")
 
 
 # ============== Simple Stream Class ==============
@@ -674,6 +1058,9 @@ class SimpleRTSPStream:
         # Prediction smoothing to reduce false positives
         self._recent_scores: deque = deque(maxlen=PREDICTION_SMOOTHING_WINDOW)
         self._consecutive_high_count = 0
+        
+        # Inference counter for sampled logging
+        self._inference_count = 0
         
         # Event recorder for clip generation
         self.event_recorder = EventRecorder(stream_id, name)
@@ -809,6 +1196,22 @@ class SimpleRTSPStream:
                     
                     self.last_prediction = result
                     
+                    # Increment inference counter and log every Nth inference
+                    self._inference_count += 1
+                    if self._inference_count % INFERENCE_LOG_SAMPLE_RATE == 0:
+                        # Log sampled inference to database (async, fire-and-forget)
+                        if main_event_loop:
+                            asyncio.run_coroutine_threadsafe(
+                                log_inference_async(
+                                    stream_id=self.id,
+                                    violence_score=smoothed_score,
+                                    non_violence_score=1.0 - smoothed_score,
+                                    inference_time_ms=result.get("inference_time_ms"),
+                                    frame_number=self.frame_count
+                                ),
+                                main_event_loop
+                            )
+                    
                     # Simplified logging - only log significant events
                     if smoothed_score >= VIOLENCE_THRESHOLD:
                         logger.warning(f"[{self.name}] Violence: {smoothed_score:.0%}")
@@ -880,26 +1283,27 @@ class SimpleRTSPStream:
             
             logger.info(f"Connecting to: {self.url}")
             
-            # Use FFmpeg backend with aggressive low-latency options
-            # REAL-TIME FFmpeg options - UDP for lowest latency
+            # Use FFmpeg backend optimized for mobile hotspot/WiFi networks
+            # TCP transport is more reliable over WiFi with packet loss
             os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = (
-                'rtsp_transport;udp|'  # UDP = lowest latency (no TCP handshake)
+                'rtsp_transport;tcp|'  # TCP for reliability over WiFi
                 'fflags;nobuffer+discardcorrupt+fastseek|'  # No buffering at all
                 'flags;low_delay|'  # Low delay decoding
                 'framedrop;1|'  # Drop frames if behind
-                'max_delay;0|'  # Zero delay
-                'reorder_queue_size;0|'  # No packet reordering
-                'analyzeduration;100000|'  # 0.1s analyze (minimal)
-                'probesize;32768|'  # Tiny probe (32KB)
+                'max_delay;500000|'  # Allow 500ms delay for network jitter
+                'reorder_queue_size;10|'  # Small reorder queue for packet loss
+                'analyzeduration;1000000|'  # 1s analyze (more time for slow networks)
+                'probesize;500000|'  # 500KB probe (better stream detection)
                 'flush_packets;1|'  # Flush immediately
                 'avioflags;direct|'  # Direct I/O
-                'timeout;2000000'  # 2s timeout
+                'stimeout;60000000|'  # 60s socket timeout
+                'timeout;60000000'  # 60s connection timeout
             )
             
             self.capture = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
             
-            # ZERO buffer for real-time
-            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 0)
+            # Small buffer for stability over WiFi
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             
             # Native resolution for speed (no resize overhead)
             # self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -908,24 +1312,24 @@ class SimpleRTSPStream:
             # Match camera FPS
             self.capture.set(cv2.CAP_PROP_FPS, 30)
             
-            # Fast connection - wait only 3 seconds
+            # Extended connection timeout for slow networks (15 seconds)
             connect_start = time.time()
-            while time.time() - connect_start < 3:
+            while time.time() - connect_start < 15:
                 if self.capture.isOpened():
                     # Try to read a test frame to confirm connection
                     ret, _ = self.capture.read()
                     if ret:
                         self.is_connected = True
                         self.error = None
-                        logger.info(f"✓ Connected: {self.name}")
+                        logger.info(f"Connected: {self.name}")
                         return
-                time.sleep(0.1)  # Check more frequently
+                time.sleep(0.2)  # Check every 200ms
             
             # Connection timed out
             self.is_connected = False
-            self.error = "Connection timed out - check RTSP URL"
+            self.error = "Connection timed out - check RTSP URL and network"
             logger.warning(f"Connection timeout: {self.name} - {self.url}")
-            time.sleep(1)  # Shorter retry delay
+            time.sleep(2)  # Wait before retry
                 
         except Exception as e:
             self.error = str(e)
@@ -1094,24 +1498,60 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     global main_event_loop
     main_event_loop = asyncio.get_running_loop()
-    logger.info("🚀 Starting RTSP Service with Database Persistence...")
+    logger.info("Starting RTSP Service with Database Persistence...")
     
     # Initialize database
     await init_db()
-    logger.info("✅ Database initialized")
+    logger.info("PostgreSQL database initialized")
+    
+    # Initialize storage service
+    storage = get_storage_service()
+    logger.info(f"Storage service initialized - clips: {storage.clips_path}")
+    
+    # Initialize MongoDB for user authentication
+    try:
+        from app.auth import init_mongodb
+        await init_mongodb()
+        logger.info("MongoDB authentication service initialized")
+    except Exception as e:
+        logger.warning(f"MongoDB auth not available (optional): {e}")
     
     # Load streams from database
     await load_streams_from_db()
     
+    # Initialize WebRTC streaming services (MediaMTX integration)
+    try:
+        from app.streaming import init_streaming_services
+        await init_streaming_services()
+        logger.info("WebRTC streaming services initialized")
+    except Exception as e:
+        logger.warning(f"WebRTC services not available: {e}")
+    
     yield
-    logger.info("🛑 Shutting down...")
+    
+    # Shutdown
+    logger.info("Shutting down...")
+    
+    # Close MongoDB connection
+    try:
+        from app.auth import close_mongodb
+        await close_mongodb()
+    except Exception:
+        pass
+    
+    try:
+        from app.streaming import shutdown_streaming_services
+        await shutdown_streaming_services()
+    except Exception:
+        pass
+        
     stream_manager.shutdown()
 
 
 app = FastAPI(
-    title="Simple RTSP Stream Service",
-    description="Minimal RTSP stream playback service",
-    version="1.0.0",
+    title="SafeSight RTSP Stream Service",
+    description="Ultra-low latency RTSP stream service with WebRTC delivery and AI violence detection",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -1123,6 +1563,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include WebRTC streaming routes
+try:
+    from app.streaming import streaming_router
+    app.include_router(streaming_router)
+    logger.info("WebRTC streaming routes registered")
+except ImportError as e:
+    logger.warning(f"WebRTC routes not available: {e}")
+
+# Include Authentication routes
+try:
+    from app.auth import auth_router
+    app.include_router(auth_router, prefix="/api/v1")
+    logger.info("Authentication routes registered at /api/v1/auth")
+except ImportError as e:
+    logger.warning(f"Auth routes not available: {e}")
+
 
 # ============== API Models ==============
 
@@ -1130,6 +1586,13 @@ class StreamCreate(BaseModel):
     name: str = Field(..., description="Stream name")
     url: str = Field(..., description="RTSP URL")
     auto_start: bool = Field(default=True, description="Auto-start stream")
+
+
+class StreamUpdate(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    location: Optional[str] = None
+    custom_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 # ============== API Routes ==============
@@ -1218,6 +1681,61 @@ async def stop_stream(stream_id: int):
         raise HTTPException(status_code=404, detail="Stream not found")
     stream.stop()
     return {"success": True, "message": f"Stream {stream_id} stopped"}
+
+
+async def _update_stream(stream_id: int, request: StreamUpdate):
+    """Update stream details. URL changes require a stream restart to take effect."""
+    stream = stream_manager.get_stream(stream_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    db_updates = {}
+
+    if request.name is not None:
+        stream.name = request.name
+        db_updates["name"] = request.name
+    if request.url is not None:
+        stream.url = request.url
+        db_updates["url"] = request.url
+    if request.location is not None:
+        db_updates["location"] = request.location
+    if request.custom_threshold is not None:
+        db_updates["custom_threshold"] = request.custom_threshold
+
+    if db_updates:
+        try:
+            async with async_session() as session:
+                await session.execute(
+                    update(DBStream)
+                    .where(DBStream.id == stream_id)
+                    .values(**db_updates)
+                )
+                await session.commit()
+        except Exception as e:
+            logger.error(f"Failed to persist stream update for {stream_id}: {e}")
+
+    return {
+        "success": True,
+        "message": f"Stream {stream_id} updated. URL changes require restart.",
+        "data": {
+            "id": str(stream_id),
+            "name": stream.name,
+            "url": stream.url,
+            "rtsp_url": stream.url,
+            "location": request.location,
+            "custom_threshold": request.custom_threshold,
+        },
+    }
+
+
+@app.patch("/api/v1/streams/{stream_id}")
+async def update_stream_patch(stream_id: int, request: StreamUpdate):
+    return await _update_stream(stream_id, request)
+
+
+@app.put("/api/v1/streams/{stream_id}")
+async def update_stream_put(stream_id: int, request: StreamUpdate):
+    return await _update_stream(stream_id, request)
 
 
 @app.delete("/api/v1/streams/{stream_id}")
@@ -1372,9 +1890,36 @@ async def get_events(limit: int = 50, offset: int = 0, status: Optional[str] = N
             
             # Build event list, checking if clip files exist
             event_list = []
+            encryption_service = get_encryption_service()
+            
             for e in events:
                 clip_exists = verify_clip_file(e.clip_path)
                 thumb_exists = verify_clip_file(e.thumbnail_path)
+                
+                # Get face paths from encrypted storage or database
+                face_paths = []
+                person_count = e.person_count or 0
+                
+                # Try encrypted storage first
+                event_files = encryption_service.get_event_files(str(e.id))
+                if event_files and event_files.get("faces"):
+                    # Return secure filenames for frontend to use with /api/v1/faces/{event_id}/secure/{filename}
+                    face_paths = event_files.get("faces", [])
+                    person_count = len(face_paths) if not person_count else person_count
+                else:
+                    # Try database - get faces from ExtractedFace table
+                    try:
+                        faces_result = await session.execute(
+                            select(ExtractedFace).where(ExtractedFace.event_id == e.id)
+                        )
+                        db_faces = faces_result.scalars().all()
+                        if db_faces:
+                            # Return face IDs for frontend to use with /api/v1/faces/{event_id}/image/{face_id}
+                            face_paths = [f"db:{face.id}" for face in db_faces]
+                            person_count = len(db_faces) if not person_count else person_count
+                    except Exception:
+                        pass
+                
                 event_list.append({
                     "id": e.id,
                     "event_id": str(e.id),  # For compatibility
@@ -1391,6 +1936,9 @@ async def get_events(limit: int = 50, offset: int = 0, status: Optional[str] = N
                     "clip_path": clip_exists,
                     "clip_duration": e.clip_duration if clip_exists else None,
                     "thumbnail_path": thumb_exists,
+                    "person_count": person_count,
+                    "participants_count": person_count,
+                    "face_paths": face_paths,
                     "created_at": e.created_at.isoformat() if e.created_at else None
                 })
             
@@ -1431,6 +1979,30 @@ async def get_event(event_id: str):
             if e:
                 clip_exists = verify_clip_file(e.clip_path)
                 thumb_exists = verify_clip_file(e.thumbnail_path)
+                
+                # Get face paths from encrypted storage or database
+                face_paths = []
+                person_count = e.person_count or 0
+                encryption_service = get_encryption_service()
+                
+                # Try encrypted storage first
+                event_files = encryption_service.get_event_files(str(e.id))
+                if event_files and event_files.get("faces"):
+                    face_paths = event_files.get("faces", [])
+                    person_count = len(face_paths) if not person_count else person_count
+                else:
+                    # Try database
+                    try:
+                        faces_result = await session.execute(
+                            select(ExtractedFace).where(ExtractedFace.event_id == e.id)
+                        )
+                        db_faces = faces_result.scalars().all()
+                        if db_faces:
+                            face_paths = [f"db:{face.id}" for face in db_faces]
+                            person_count = len(db_faces) if not person_count else person_count
+                    except Exception:
+                        pass
+                
                 return {
                     "success": True,
                     "data": {
@@ -1448,6 +2020,9 @@ async def get_event(event_id: str):
                         "clip_path": clip_exists,
                         "clip_duration": e.clip_duration if clip_exists else None,
                         "thumbnail_path": thumb_exists,
+                        "person_count": person_count,
+                        "participants_count": person_count,
+                        "face_paths": face_paths,
                         "created_at": e.created_at.isoformat() if e.created_at else None
                     }
                 }
@@ -1517,6 +2092,362 @@ async def mark_no_action_required(event_id: str):
             event["reviewed_at"] = datetime.utcnow().isoformat()
             return {"success": True, "message": "Event marked as no action required"}
     raise HTTPException(status_code=404, detail="Event not found")
+
+
+# ============== Video Clips Gallery API ==============
+
+@app.get("/api/v1/video-clips")
+async def get_video_clips(limit: int = 50, offset: int = 0, stream_id: Optional[int] = None):
+    """
+    Get all video clips from the database for the gallery view.
+    
+    Returns clip metadata with pagination support.
+    Optionally filter by stream_id.
+    """
+    try:
+        async with async_session() as session:
+            from sqlalchemy import func
+            
+            # Build query
+            query = select(VideoClip).order_by(VideoClip.recorded_at.desc())
+            
+            if stream_id is not None:
+                query = query.where(VideoClip.stream_id == stream_id)
+            
+            # Get total count
+            count_query = select(func.count(VideoClip.id))
+            if stream_id is not None:
+                count_query = count_query.where(VideoClip.stream_id == stream_id)
+            count_result = await session.execute(count_query)
+            total_count = count_result.scalar() or 0
+            
+            # Get clips with pagination
+            query = query.limit(limit).offset(offset)
+            result = await session.execute(query)
+            clips = result.scalars().all()
+            
+            # Build response
+            clip_list = []
+            for clip in clips:
+                # Get event info if available
+                event_info = None
+                if clip.event_id:
+                    event_result = await session.execute(
+                        select(Event).where(Event.id == clip.event_id)
+                    )
+                    event = event_result.scalar_one_or_none()
+                    if event:
+                        event_info = {
+                            "id": event.id,
+                            "severity": event.severity.value if event.severity else None,
+                            "status": event.status.value if event.status else None,
+                            "max_confidence": event.max_confidence,
+                            "stream_name": event.stream_name
+                        }
+                
+                clip_list.append({
+                    "id": clip.id,
+                    "event_id": clip.event_id,
+                    "stream_id": clip.stream_id,
+                    "filename": clip.filename,
+                    "file_size_bytes": clip.file_size_bytes,
+                    "duration_seconds": clip.duration_seconds,
+                    "width": clip.width,
+                    "height": clip.height,
+                    "fps": clip.fps,
+                    "frame_count": clip.frame_count,
+                    "has_thumbnail": clip.thumbnail_data is not None,
+                    "recorded_at": clip.recorded_at.isoformat() if clip.recorded_at else None,
+                    "created_at": clip.created_at.isoformat() if clip.created_at else None,
+                    "event": event_info
+                })
+            
+            return {
+                "success": True,
+                "data": clip_list,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": total_count
+                }
+            }
+    except Exception as e:
+        logger.error(f"Failed to get video clips: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/video-clips/{clip_id}")
+async def get_video_clip(clip_id: int):
+    """Get a specific video clip by ID."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(VideoClip).where(VideoClip.id == clip_id)
+            )
+            clip = result.scalar_one_or_none()
+            
+            if not clip:
+                raise HTTPException(status_code=404, detail="Clip not found")
+            
+            # Get event info
+            event_info = None
+            if clip.event_id:
+                event_result = await session.execute(
+                    select(Event).where(Event.id == clip.event_id)
+                )
+                event = event_result.scalar_one_or_none()
+                if event:
+                    event_info = {
+                        "id": event.id,
+                        "severity": event.severity.value if event.severity else None,
+                        "status": event.status.value if event.status else None,
+                        "max_confidence": event.max_confidence,
+                        "stream_name": event.stream_name
+                    }
+            
+            # Get face count
+            face_count_result = await session.execute(
+                select(ExtractedFace).where(ExtractedFace.clip_id == clip_id)
+            )
+            faces = face_count_result.scalars().all()
+            
+            return {
+                "success": True,
+                "data": {
+                    "id": clip.id,
+                    "event_id": clip.event_id,
+                    "stream_id": clip.stream_id,
+                    "filename": clip.filename,
+                    "file_path": clip.file_path,
+                    "file_size_bytes": clip.file_size_bytes,
+                    "duration_seconds": clip.duration_seconds,
+                    "width": clip.width,
+                    "height": clip.height,
+                    "fps": clip.fps,
+                    "frame_count": clip.frame_count,
+                    "has_thumbnail": clip.thumbnail_data is not None,
+                    "recorded_at": clip.recorded_at.isoformat() if clip.recorded_at else None,
+                    "created_at": clip.created_at.isoformat() if clip.created_at else None,
+                    "event": event_info,
+                    "face_count": len(faces)
+                }
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get video clip: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/video-clips/{clip_id}/thumbnail")
+async def get_video_clip_thumbnail(clip_id: int):
+    """Get the thumbnail for a video clip (stored inline in DB)."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(VideoClip).where(VideoClip.id == clip_id)
+            )
+            clip = result.scalar_one_or_none()
+            
+            if not clip or not clip.thumbnail_data:
+                raise HTTPException(status_code=404, detail="Thumbnail not found")
+            
+            from fastapi.responses import Response
+            return Response(
+                content=clip.thumbnail_data,
+                media_type=clip.thumbnail_mime_type or "image/jpeg"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get thumbnail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== Extracted Faces Gallery API ==============
+
+@app.get("/api/v1/extracted-faces")
+async def get_extracted_faces(
+    limit: int = 100, 
+    offset: int = 0, 
+    stream_id: Optional[int] = None,
+    event_id: Optional[int] = None,
+    clip_id: Optional[int] = None
+):
+    """
+    Get all extracted faces from the database for the gallery view.
+    
+    Returns face metadata with pagination support.
+    Optionally filter by stream_id, event_id, or clip_id.
+    """
+    try:
+        async with async_session() as session:
+            from sqlalchemy import func
+            
+            # Build query
+            query = select(ExtractedFace).order_by(ExtractedFace.extracted_at.desc())
+            
+            if stream_id is not None:
+                query = query.where(ExtractedFace.stream_id == stream_id)
+            if event_id is not None:
+                query = query.where(ExtractedFace.event_id == event_id)
+            if clip_id is not None:
+                query = query.where(ExtractedFace.clip_id == clip_id)
+            
+            # Get total count
+            count_query = select(func.count(ExtractedFace.id))
+            if stream_id is not None:
+                count_query = count_query.where(ExtractedFace.stream_id == stream_id)
+            if event_id is not None:
+                count_query = count_query.where(ExtractedFace.event_id == event_id)
+            if clip_id is not None:
+                count_query = count_query.where(ExtractedFace.clip_id == clip_id)
+            count_result = await session.execute(count_query)
+            total_count = count_result.scalar() or 0
+            
+            # Get faces with pagination
+            query = query.limit(limit).offset(offset)
+            result = await session.execute(query)
+            faces = result.scalars().all()
+            
+            # Build response
+            face_list = []
+            for face in faces:
+                # Get event info if available
+                event_info = None
+                if face.event_id:
+                    event_result = await session.execute(
+                        select(Event).where(Event.id == face.event_id)
+                    )
+                    event = event_result.scalar_one_or_none()
+                    if event:
+                        event_info = {
+                            "id": event.id,
+                            "severity": event.severity.value if event.severity else None,
+                            "status": event.status.value if event.status else None,
+                            "stream_name": event.stream_name,
+                            "start_time": event.start_time.isoformat() if event.start_time else None
+                        }
+                
+                face_list.append({
+                    "id": face.id,
+                    "clip_id": face.clip_id,
+                    "stream_id": face.stream_id,
+                    "event_id": face.event_id,
+                    "face_index": face.face_index,
+                    "confidence": face.confidence,
+                    "image_size_bytes": face.image_size_bytes,
+                    "bbox": {
+                        "x": face.bbox_x,
+                        "y": face.bbox_y,
+                        "width": face.bbox_width,
+                        "height": face.bbox_height
+                    } if face.bbox_x is not None else None,
+                    "frame_number": face.frame_number,
+                    "frame_timestamp_ms": face.frame_timestamp_ms,
+                    "extracted_at": face.extracted_at.isoformat() if face.extracted_at else None,
+                    "event": event_info
+                })
+            
+            return {
+                "success": True,
+                "data": face_list,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": total_count
+                }
+            }
+    except Exception as e:
+        logger.error(f"Failed to get extracted faces: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/extracted-faces/{face_id}")
+async def get_extracted_face(face_id: int):
+    """Get a specific extracted face by ID."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(ExtractedFace).where(ExtractedFace.id == face_id)
+            )
+            face = result.scalar_one_or_none()
+            
+            if not face:
+                raise HTTPException(status_code=404, detail="Face not found")
+            
+            # Get event info
+            event_info = None
+            if face.event_id:
+                event_result = await session.execute(
+                    select(Event).where(Event.id == face.event_id)
+                )
+                event = event_result.scalar_one_or_none()
+                if event:
+                    event_info = {
+                        "id": event.id,
+                        "severity": event.severity.value if event.severity else None,
+                        "status": event.status.value if event.status else None,
+                        "stream_name": event.stream_name,
+                        "start_time": event.start_time.isoformat() if event.start_time else None
+                    }
+            
+            return {
+                "success": True,
+                "data": {
+                    "id": face.id,
+                    "clip_id": face.clip_id,
+                    "stream_id": face.stream_id,
+                    "event_id": face.event_id,
+                    "face_index": face.face_index,
+                    "confidence": face.confidence,
+                    "image_size_bytes": face.image_size_bytes,
+                    "bbox": {
+                        "x": face.bbox_x,
+                        "y": face.bbox_y,
+                        "width": face.bbox_width,
+                        "height": face.bbox_height
+                    } if face.bbox_x is not None else None,
+                    "frame_number": face.frame_number,
+                    "frame_timestamp_ms": face.frame_timestamp_ms,
+                    "extracted_at": face.extracted_at.isoformat() if face.extracted_at else None,
+                    "event": event_info
+                }
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get extracted face: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/extracted-faces/{face_id}/image")
+async def get_extracted_face_image(face_id: int):
+    """Get the image for an extracted face (stored inline in DB)."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(ExtractedFace).where(ExtractedFace.id == face_id)
+            )
+            face = result.scalar_one_or_none()
+            
+            if not face or not face.image_data:
+                raise HTTPException(status_code=404, detail="Face image not found")
+            
+            from fastapi.responses import Response
+            return Response(
+                content=face.image_data,
+                media_type=face.image_mime_type or "image/jpeg"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get face image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/v1/events/import-clips")
@@ -1625,7 +2556,61 @@ async def import_clips_as_events():
 
 @app.get("/api/v1/clips/{clip_name}")
 async def get_clip(clip_name: str, request: Request):
-    """Serve a violence event clip with HTTP Range request support for browser video playback."""
+    """
+    Serve a violence event clip with HTTP Range request support for browser video playback.
+    Automatically decrypts from secure storage if the clip is encrypted.
+    """
+    # First, try to decrypt from secure storage (primary storage location)
+    try:
+        encryption_service = get_encryption_service()
+        clip_info = encryption_service.get_clip_info(clip_name)
+        
+        if clip_info:
+            # Clip exists in encrypted storage - decrypt and serve
+            decrypted_data = encryption_service.decrypt_clip(clip_name)
+            if decrypted_data:
+                file_size = len(decrypted_data)
+                range_header = request.headers.get("range")
+                
+                if range_header:
+                    # Parse Range header: "bytes=start-end"
+                    range_str = range_header.replace("bytes=", "")
+                    parts = range_str.split("-")
+                    start = int(parts[0]) if parts[0] else 0
+                    end = int(parts[1]) if parts[1] else file_size - 1
+                    end = min(end, file_size - 1)
+                    content_length = end - start + 1
+                    
+                    import io
+                    return StreamingResponse(
+                        iter([decrypted_data[start:end + 1]]),
+                        status_code=206,
+                        media_type="video/mp4",
+                        headers={
+                            "Content-Range": f"bytes {start}-{end}/{file_size}",
+                            "Accept-Ranges": "bytes",
+                            "Content-Length": str(content_length),
+                            "Content-Disposition": f'inline; filename="clip_{clip_name[:8]}.mp4"',
+                            "Cache-Control": "private, no-store",
+                        },
+                    )
+                
+                # No range header — send full decrypted file
+                import io
+                return StreamingResponse(
+                    io.BytesIO(decrypted_data),
+                    media_type="video/mp4",
+                    headers={
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": str(file_size),
+                        "Content-Disposition": f'inline; filename="clip_{clip_name[:8]}.mp4"',
+                        "Cache-Control": "private, no-store",
+                    },
+                )
+    except Exception as e:
+        logger.debug(f"Secure storage lookup failed for {clip_name}: {e}")
+    
+    # Fallback to legacy unencrypted storage
     clip_path = CLIPS_DIR / clip_name
     if not clip_path.exists():
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -1682,7 +2667,31 @@ async def get_clip(clip_name: str, request: Request):
 
 @app.get("/api/v1/clips/thumbnails/{thumb_name}")
 async def get_thumbnail(thumb_name: str):
-    """Serve a violence event thumbnail."""
+    """
+    Serve a violence event thumbnail.
+    Automatically decrypts from secure storage if the thumbnail is encrypted.
+    """
+    # First, try to decrypt from secure storage (primary storage location)
+    try:
+        encryption_service = get_encryption_service()
+        
+        # Check if this is an encrypted thumbnail
+        thumb_info = encryption_service.manifest.get("thumbnails", {}).get(thumb_name)
+        
+        if thumb_info:
+            # Thumbnail exists in encrypted storage - decrypt and serve
+            decrypted_data = encryption_service.decrypt_thumbnail(thumb_name)
+            if decrypted_data:
+                import io
+                return StreamingResponse(
+                    io.BytesIO(decrypted_data),
+                    media_type="image/jpeg",
+                    headers={"Cache-Control": "private, no-store"}
+                )
+    except Exception as e:
+        logger.debug(f"Secure storage lookup failed for thumbnail {thumb_name}: {e}")
+    
+    # Fallback to legacy unencrypted storage
     # Try thumbnails subdirectory first
     thumb_path = THUMBNAILS_DIR / thumb_name
     if not thumb_path.exists():
@@ -1698,18 +2707,236 @@ async def get_thumbnail(thumb_name: str):
     )
 
 
+# ============== Secure Encrypted Storage API ==============
+
+@app.get("/api/v1/secure/clips/{secure_filename}")
+async def get_secure_clip(secure_filename: str, request: Request):
+    """
+    Serve an encrypted violence event clip with HTTP Range request support.
+    Decrypts on-the-fly for streaming.
+    """
+    from app.storage.encryption import get_encryption_service
+    
+    try:
+        encryption_service = get_encryption_service()
+        
+        # Check if clip exists in manifest
+        clip_info = encryption_service.get_clip_info(secure_filename)
+        if not clip_info:
+            # Fallback to legacy unencrypted storage
+            legacy_path = CLIPS_DIR / secure_filename
+            if legacy_path.exists():
+                return FileResponse(
+                    path=str(legacy_path),
+                    media_type="video/mp4",
+                    filename=f"clip_{secure_filename[:8]}.mp4"
+                )
+            raise HTTPException(status_code=404, detail="Clip not found")
+        
+        # Decrypt the clip
+        video_data = encryption_service.decrypt_clip(secure_filename)
+        if not video_data:
+            raise HTTPException(status_code=500, detail="Failed to decrypt clip")
+        
+        file_size = len(video_data)
+        range_header = request.headers.get("range")
+        
+        if range_header:
+            # Parse Range header for partial content
+            range_str = range_header.replace("bytes=", "")
+            parts = range_str.split("-")
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if parts[1] else file_size - 1
+            end = min(end, file_size - 1)
+            content_length = end - start + 1
+            
+            def iter_chunk():
+                yield video_data[start:end + 1]
+            
+            return StreamingResponse(
+                iter_chunk(),
+                status_code=206,
+                media_type="video/mp4",
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(content_length),
+                    "Cache-Control": "private, no-store",  # Don't cache decrypted content
+                },
+            )
+        
+        # No range header — send full decrypted file
+        import io
+        return StreamingResponse(
+            io.BytesIO(video_data),
+            media_type="video/mp4",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+                "Cache-Control": "private, no-store",
+            },
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to serve secure clip {secure_filename}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve clip")
+
+
+@app.get("/api/v1/secure/thumbnails/{secure_filename}")
+async def get_secure_thumbnail(secure_filename: str):
+    """Serve an encrypted thumbnail image."""
+    from app.storage.encryption import get_encryption_service
+    
+    try:
+        encryption_service = get_encryption_service()
+        
+        # Decrypt thumbnail
+        image_data = encryption_service.decrypt_thumbnail(secure_filename)
+        if not image_data:
+            # Fallback to legacy storage
+            legacy_path = THUMBNAILS_DIR / secure_filename
+            if legacy_path.exists():
+                return FileResponse(legacy_path, media_type="image/jpeg")
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+        
+        import io
+        return StreamingResponse(
+            io.BytesIO(image_data),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, no-store"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to serve secure thumbnail {secure_filename}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve thumbnail")
+
+
+@app.get("/api/v1/secure/faces/{secure_filename}")
+async def get_secure_face(secure_filename: str):
+    """Serve an encrypted face image."""
+    from app.storage.encryption import get_encryption_service
+    
+    try:
+        encryption_service = get_encryption_service()
+        
+        # Decrypt face image
+        image_data = encryption_service.decrypt_face(secure_filename)
+        if not image_data:
+            raise HTTPException(status_code=404, detail="Face image not found")
+        
+        import io
+        return StreamingResponse(
+            io.BytesIO(image_data),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, no-store"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to serve secure face {secure_filename}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve face")
+
+
+@app.get("/api/v1/secure/events/{event_id}/files")
+async def get_event_files(event_id: str):
+    """Get all encrypted file references for an event."""
+    from app.storage.encryption import get_encryption_service
+    
+    try:
+        encryption_service = get_encryption_service()
+        event_files = encryption_service.get_event_files(event_id)
+        
+        if not event_files:
+            raise HTTPException(status_code=404, detail="Event not found in secure storage")
+        
+        return {
+            "event_id": event_id,
+            "clips": event_files.get("clips", []),
+            "thumbnails": event_files.get("thumbnails", []),
+            "face_count": len(event_files.get("faces", [])),
+            "created_at": event_files.get("created_at")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get event files for {event_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get event files")
+
+
+@app.get("/api/v1/secure/manifest")
+async def get_secure_manifest():
+    """
+    Get the encrypted manifest for web interface.
+    This provides a summary of all stored events and their file references.
+    """
+    from app.storage.encryption import get_encryption_service
+    
+    try:
+        encryption_service = get_encryption_service()
+        return encryption_service.get_manifest_json()
+    except Exception as e:
+        logger.error(f"Failed to get secure manifest: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get manifest")
+
+
+@app.get("/api/v1/secure/storage-stats")
+async def get_secure_storage_stats():
+    """Get secure storage statistics."""
+    from app.storage.encryption import get_encryption_service
+    
+    try:
+        encryption_service = get_encryption_service()
+        return encryption_service.get_storage_stats()
+    except Exception as e:
+        logger.error(f"Failed to get storage stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get storage stats")
+
+
+@app.delete("/api/v1/secure/events/{event_id}")
+async def delete_secure_event(event_id: str):
+    """Delete all encrypted files for an event."""
+    from app.storage.encryption import get_encryption_service
+    
+    try:
+        encryption_service = get_encryption_service()
+        success = encryption_service.delete_event_files(event_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        return {"status": "deleted", "event_id": event_id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete event files for {event_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete event")
+
+
 # ============== Face/Participant Image Routes ==============
 
+# Legacy face directory reference (DO NOT auto-create - use encrypted storage instead)
+# Only used if legacy clip files still exist during migration
 FACE_PARTICIPANTS_DIR = CLIPS_DIR / "face_participants"
-FACE_PARTICIPANTS_DIR.mkdir(exist_ok=True)
+# Note: Directory is NOT auto-created - encrypted storage is the primary location
 
 
 @app.post("/api/v1/faces/{event_id}/extract")
 async def extract_faces_from_event(event_id: str):
-    """Manually trigger face extraction for an event clip."""
+    """Manually trigger face extraction for an event clip and store in database."""
     try:
         # Find the event in database first
         clip_filename = None
+        db_event_id = None
+        stream_id = None
+        clip_id = None
+        secure_clip_filename = None  # For encrypted storage
         
         try:
             event_id_int = int(event_id)
@@ -1720,6 +2947,16 @@ async def extract_faces_from_event(event_id: str):
                 db_event = result.scalar_one_or_none()
                 if db_event:
                     clip_filename = db_event.clip_path
+                    db_event_id = db_event.id
+                    stream_id = db_event.stream_id
+                    
+                    # Check if VideoClip record exists
+                    clip_result = await session.execute(
+                        select(VideoClip).where(VideoClip.event_id == db_event.id)
+                    )
+                    video_clip = clip_result.scalar_one_or_none()
+                    if video_clip:
+                        clip_id = video_clip.id
         except (ValueError, Exception) as e:
             logger.warning(f"DB lookup failed for event {event_id}: {e}")
         
@@ -1730,6 +2967,88 @@ async def extract_faces_from_event(event_id: str):
                     clip_filename = e.get("clip_path")
                     break
         
+        # Try encrypted storage first
+        encryption_svc = get_encryption_service()
+        event_files = encryption_svc.get_event_files(event_id)
+        
+        if event_files and event_files.get("clips"):
+            # Use first clip from encrypted storage
+            secure_clip_filename = event_files["clips"][0]
+            logger.info(f"Found encrypted clip for event {event_id}: {secure_clip_filename}")
+            
+            # Decrypt to temp file for face extraction
+            decrypted_data = encryption_svc.decrypt_clip(secure_clip_filename)
+            if decrypted_data:
+                import tempfile
+                temp_clip_path = Path(settings.temp_storage_path) / f"temp_extract_{event_id}.mp4"
+                temp_clip_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(temp_clip_path, 'wb') as f:
+                    f.write(decrypted_data)
+                
+                logger.info(f"Decrypted clip to temp file for face extraction: {temp_clip_path}")
+                
+                # Run face extraction
+                face_extractor = get_face_extractor()
+                faces_data = face_extractor.process_clip(str(temp_clip_path), event_id)
+                
+                # Clean up temp file
+                try:
+                    temp_clip_path.unlink()
+                except Exception:
+                    pass
+                
+                # Save faces to encrypted storage and database
+                saved_faces = []
+                for i, face in enumerate(faces_data):
+                    if face.get("image_data"):
+                        # Save to encrypted storage
+                        face_secure_id = encryption_svc.encrypt_and_save_face(
+                            face["image_data"],
+                            event_id,
+                            i,
+                            (face.get("bbox_x"), face.get("bbox_y"), 
+                             face.get("bbox_width"), face.get("bbox_height"))
+                        )
+                        face["secure_filename"] = face_secure_id
+                        saved_faces.append(face)
+                
+                # Also save to database if we have IDs
+                if db_event_id and clip_id:
+                    try:
+                        storage = get_storage_service()
+                        for face in faces_data:
+                            face['clip_id'] = clip_id
+                            face['event_id'] = db_event_id
+                            face['stream_id'] = stream_id
+                        
+                        db_faces = await storage.save_faces_batch(
+                            faces_data, clip_id, db_event_id, stream_id
+                        )
+                        logger.info(f"Saved {len(db_faces)} faces to database for event {event_id}")
+                        
+                        # Update event person_count
+                        async with async_session() as session:
+                            async with session.begin():
+                                event = await session.get(Event, db_event_id)
+                                if event:
+                                    event.person_count = len(saved_faces)
+                            await session.commit()
+                    except Exception as db_err:
+                        logger.warning(f"Failed to save faces to database: {db_err}")
+                
+                logger.info(f"Extracted {len(saved_faces)} faces for event {event_id}")
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "event_id": event_id,
+                        "faces_count": len(saved_faces),
+                        "stored_in_db": bool(db_event_id and clip_id),
+                        "storage": "encrypted"
+                    }
+                }
+        
+        # Fallback to legacy filesystem (old clips before encryption)
         if not clip_filename:
             raise HTTPException(status_code=404, detail="Event not found")
         
@@ -1737,21 +3056,45 @@ async def extract_faces_from_event(event_id: str):
         if not clip_path.exists():
             raise HTTPException(status_code=404, detail=f"Clip file not found: {clip_filename}")
         
-        logger.info(f"🔍 Manual face extraction requested for event {event_id}, clip: {clip_path}")
+        logger.info(f"Manual face extraction requested for event {event_id}, clip: {clip_path}")
         
         # Run face extraction
         face_extractor = get_face_extractor()
-        faces = face_extractor.process_clip(str(clip_path), event_id)
+        faces_data = face_extractor.process_clip(str(clip_path), event_id)
         
-        logger.info(f"✅ Extracted {len(faces)} faces for event {event_id}")
+        # If we have database IDs, save faces to PostgreSQL
+        if db_event_id and clip_id:
+            try:
+                storage = get_storage_service()
+                for face in faces_data:
+                    face['clip_id'] = clip_id
+                    face['event_id'] = db_event_id
+                    face['stream_id'] = stream_id
+                
+                saved_faces = await storage.save_faces_batch(
+                    faces_data, clip_id, db_event_id, stream_id
+                )
+                logger.info(f"Saved {len(saved_faces)} faces to database for event {event_id}")
+                
+                # Update event person_count
+                async with async_session() as session:
+                    async with session.begin():
+                        event = await session.get(Event, db_event_id)
+                        if event:
+                            event.person_count = len(saved_faces)
+                    await session.commit()
+            except Exception as db_err:
+                logger.warning(f"Failed to save faces to database: {db_err}")
+        
+        logger.info(f"Extracted {len(faces_data)} faces for event {event_id}")
         
         return {
             "success": True,
             "data": {
                 "event_id": event_id,
-                "faces": faces,
-                "count": len(faces),
-                "clip_path": clip_filename
+                "faces_count": len(faces_data),
+                "stored_in_db": bool(db_event_id and clip_id),
+                "storage": "legacy"
             }
         }
     except HTTPException:
@@ -1762,28 +3105,135 @@ async def extract_faces_from_event(event_id: str):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/v1/faces/{event_id}")
 async def get_event_faces(event_id: str):
-    """Get list of detected participant faces for an event."""
+    """
+    Get list of detected participant faces for an event.
+    Checks encrypted storage first, then database, then legacy filesystem.
+    """
     try:
-        face_extractor = get_face_extractor()
-        faces = face_extractor.get_faces_for_event(event_id)
-        return {
-            "success": True,
-            "data": {
-                "event_id": event_id,
-                "faces": faces,
-                "count": len(faces)
+        # First, try encrypted storage (primary storage location)
+        try:
+            encryption_service = get_encryption_service()
+            event_files = encryption_service.get_event_files(event_id)
+            
+            if event_files and event_files.get("faces"):
+                face_list = []
+                for i, secure_filename in enumerate(event_files.get("faces", [])):
+                    face_info = encryption_service.manifest.get("faces", {}).get(secure_filename, {})
+                    face_list.append({
+                        "id": secure_filename,
+                        "face_index": face_info.get("face_index", i),
+                        "url": f"/api/v1/faces/{event_id}/secure/{secure_filename}",
+                        "secure_filename": secure_filename,
+                        "bbox": {
+                            "x": face_info.get("bbox", [None])[0],
+                            "y": face_info.get("bbox", [None, None])[1] if face_info.get("bbox") and len(face_info.get("bbox", [])) > 1 else None,
+                            "width": face_info.get("bbox", [None, None, None])[2] if face_info.get("bbox") and len(face_info.get("bbox", [])) > 2 else None,
+                            "height": face_info.get("bbox", [None, None, None, None])[3] if face_info.get("bbox") and len(face_info.get("bbox", [])) > 3 else None,
+                        } if face_info.get("bbox") else None,
+                    })
+                return {
+                    "success": True,
+                    "data": {
+                        "event_id": event_id,
+                        "faces": face_list,
+                        "count": len(face_list),
+                        "source": "encrypted"
+                    }
+                }
+        except Exception as e:
+            logger.debug(f"Encrypted storage face lookup failed: {e}")
+        
+        # Try to get faces from database
+        try:
+            event_id_int = int(event_id)
+            storage = get_storage_service()
+            faces = await storage.get_faces_by_event(event_id_int)
+            
+            if faces:
+                face_list = [
+                    {
+                        "id": face.id,
+                        "face_index": face.face_index,
+                        "url": f"/api/v1/faces/{event_id}/image/{face.id}",
+                        "bbox": {
+                            "x": face.bbox_x,
+                            "y": face.bbox_y,
+                            "width": face.bbox_width,
+                            "height": face.bbox_height
+                        } if face.bbox_x is not None else None,
+                        "frame_number": face.frame_number,
+                        "confidence": face.confidence
+                    }
+                    for face in faces
+                ]
+                return {
+                    "success": True,
+                    "data": {
+                        "event_id": event_id,
+                        "faces": face_list,
+                        "count": len(faces),
+                        "source": "database"
+                    }
+                }
+        except (ValueError, Exception) as e:
+            logger.debug(f"DB face lookup failed: {e}")
+        
+        # Fallback to legacy filesystem
+        face_dir = FACE_PARTICIPANTS_DIR / event_id
+        if face_dir.exists():
+            faces = sorted([f.name for f in face_dir.glob("*.jpg")])
+            face_list = [
+                {
+                    "face_index": i,
+                    "url": f"/api/v1/faces/{event_id}/{name}",
+                    "filename": name
+                }
+                for i, name in enumerate(faces)
+            ]
+            return {
+                "success": True,
+                "data": {
+                    "event_id": event_id,
+                    "faces": face_list,
+                    "count": len(faces),
+                    "source": "filesystem"
+                }
             }
-        }
+        
+        return {"success": True, "data": {"event_id": event_id, "faces": [], "count": 0}}
     except Exception as e:
         logger.error(f"Failed to get faces for event {event_id}: {e}")
         return {"success": True, "data": {"event_id": event_id, "faces": [], "count": 0}}
 
 
+@app.get("/api/v1/faces/{event_id}/image/{face_id}")
+async def get_face_image_by_id(event_id: str, face_id: int):
+    """Serve a participant face image from database."""
+    try:
+        storage = get_storage_service()
+        face = await storage.get_face_by_id(face_id)
+        
+        if not face:
+            raise HTTPException(status_code=404, detail="Face not found")
+        
+        return StreamingResponse(
+            iter([face.image_data]),
+            media_type=face.image_mime_type or "image/jpeg",
+            headers={"Cache-Control": "public, max-age=3600"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get face image {face_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v1/faces/{event_id}/{face_name}")
 async def get_face_image(event_id: str, face_name: str):
-    """Serve a participant face image."""
+    """Serve a participant face image from legacy filesystem."""
     face_path = FACE_PARTICIPANTS_DIR / event_id / face_name
     if not face_path.exists():
         raise HTTPException(status_code=404, detail="Face image not found")
@@ -1793,6 +3243,31 @@ async def get_face_image(event_id: str, face_name: str):
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=3600"}
     )
+
+
+@app.get("/api/v1/faces/{event_id}/secure/{secure_filename}")
+async def get_secure_face_image(event_id: str, secure_filename: str):
+    """Serve a participant face image from encrypted storage."""
+    try:
+        encryption_service = get_encryption_service()
+        
+        # Decrypt face image
+        image_data = encryption_service.decrypt_face(secure_filename)
+        if not image_data:
+            raise HTTPException(status_code=404, detail="Face image not found")
+        
+        import io
+        return StreamingResponse(
+            io.BytesIO(image_data),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, no-store"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to serve secure face {secure_filename}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve face")
 
 
 # ============== WebSocket for real-time predictions ==============

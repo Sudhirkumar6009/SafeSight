@@ -1,60 +1,66 @@
-"""Test loading the Keras MobileNetV2+LSTM model"""
+"""Test loading the ONNX violence detection model"""
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import sys
 
 def write_result(msg):
     """Write to a file so output is captured regardless of redirects"""
     with open('test_load_result.txt', 'a') as f:
         f.write(msg + '\n')
+    print(msg)
 
 # Clear previous results
 if os.path.exists('test_load_result.txt'):
     os.remove('test_load_result.txt')
 
 try:
-    import warnings
-    warnings.filterwarnings('ignore')
+    import numpy as np
+    import onnxruntime as ort
     
-    import tensorflow as tf
-    tf.get_logger().setLevel('ERROR')
+    write_result(f"ONNX Runtime version: {ort.__version__}")
     
-    write_result(f"TensorFlow version: {tf.__version__}")
-    
-    # Use the proper compatibility loader
-    sys.path.insert(0, os.path.dirname(__file__))
-    from app.models.keras_loader import load_keras_model_compatible
-    
-    MODEL_PATH = './models/violence_model_legacy.h5'
+    MODEL_PATH = './models/violence_model.onnx'
     
     if not os.path.exists(MODEL_PATH):
         write_result(f"ERROR: Model file not found at {MODEL_PATH}")
         write_result(f"Current directory: {os.getcwd()}")
         if os.path.exists('models'):
             write_result(f"Models directory contents: {os.listdir('models')}")
-        print("Check test_load_result.txt for results")
         sys.exit(1)
     
     try:
-        model = load_keras_model_compatible(MODEL_PATH)
+        # Load ONNX model - from trusted reference
+        write_result(f"Loading ONNX model from: {MODEL_PATH}")
+        session = ort.InferenceSession(MODEL_PATH, providers=['CPUExecutionProvider'])
+        input_name = session.get_inputs()[0].name
         
         write_result("=" * 50)
-        write_result("SUCCESS! MobileNetV2+LSTM Model loaded")
+        write_result("SUCCESS! ONNX Model loaded")
         write_result("=" * 50)
-        write_result(f"Model type: {type(model).__name__}")
-        write_result(f"Model input shape: {model.input_shape}")
-        write_result(f"Expected frames: {model.expected_frames}")
         
-        # Test with dummy data (16 frames of 224x224 RGB)
-        import numpy as np
-        dummy_input = np.random.randint(0, 255, (1, 16, 224, 224, 3)).astype(np.float32)
-        prediction = model.predict(dummy_input, verbose=0)
-        write_result(f"Test prediction shape: {prediction.shape}")
-        write_result(f"Test prediction value: {prediction[0][0]:.4f}")
-        write_result("Model inference test PASSED!")
+        # Get model info
+        input_info = session.get_inputs()[0]
+        output_info = session.get_outputs()[0]
         
-        print("SUCCESS - Check test_load_result.txt for results")
+        write_result(f"Input name: {input_info.name}")
+        write_result(f"Input shape: {input_info.shape}")
+        write_result(f"Output name: {output_info.name}")
+        write_result(f"Output shape: {output_info.shape}")
+        write_result(f"Providers: {session.get_providers()}")
+        
+        # Test with dummy data (1, 16, 224, 224, 3) - from trusted reference
+        write_result("\nRunning test inference...")
+        dummy_input = np.random.rand(1, 16, 224, 224, 3).astype(np.float32)
+        outputs = session.run(None, {input_name: dummy_input})
+        
+        prediction_score = outputs[0][0][0]
+        write_result(f"Test prediction score: {prediction_score:.4f}")
+        
+        if prediction_score > 0.5:
+            write_result(f"Classification: Violence ({prediction_score*100:.1f}%)")
+        else:
+            write_result(f"Classification: Normal ({(1-prediction_score)*100:.1f}%)")
+        
+        write_result("\nModel inference test PASSED!")
         
     except Exception as e:
         write_result("=" * 50)
@@ -63,8 +69,8 @@ try:
         write_result(f"Message: {str(e)}")
         import traceback
         write_result(traceback.format_exc())
-        print("FAILED - Check test_load_result.txt for results")
         
 except Exception as e:
     write_result(f"Import Error: {str(e)}")
-    print("FAILED - Check test_load_result.txt for results")
+    import traceback
+    write_result(traceback.format_exc())
