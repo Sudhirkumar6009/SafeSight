@@ -220,6 +220,7 @@ curl -X POST http://localhost:8080/api/v1/streams \
 | `CLIP_DURATION_BEFORE`   | 5                                             | Seconds before event         |
 | `CLIP_DURATION_AFTER`    | 10                                            | Seconds after event          |
 | `CLIPS_DIR`              | ./clips                                       | Clip storage directory       |
+| `DATABASE_URL`           | postgresql+asyncpg://...                      | Async PostgreSQL connection  |
 | `MODEL_PATH`             | ../ml-service/models/violence_model_legacy.h5 | Local model path             |
 
 ## 📊 Event Flow

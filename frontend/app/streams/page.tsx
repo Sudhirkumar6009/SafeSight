@@ -7,6 +7,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Navbar } from "@/components";
 import { StreamCard } from "@/components/StreamCard";
@@ -137,6 +138,12 @@ export default function StreamsPage() {
                 {isConnected ? "Live" : "Disconnected"}
               </span>
             </div>
+            <Link
+              href="/streams/live"
+              className="px-4 py-2 border border-cyan-500/60 text-cyan-300 hover:bg-cyan-500/10 rounded-lg font-medium transition-colors"
+            >
+              Open WebRTC Player
+            </Link>
             <button
               onClick={() => setFormOpen(true)}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"

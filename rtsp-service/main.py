@@ -11,6 +11,7 @@ import threading
 import time
 import json
 import subprocess
+import socket
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple, Callable, Union
@@ -2949,6 +2950,7 @@ async def extract_faces_from_event(event_id: str):
                     clip_filename = db_event.clip_path
                     db_event_id = db_event.id
                     stream_id = db_event.stream_id
+                    secure_clip_filename = db_event.secure_clip_id
                     
                     # Check if VideoClip record exists
                     clip_result = await session.execute(
@@ -2957,6 +2959,9 @@ async def extract_faces_from_event(event_id: str):
                     video_clip = clip_result.scalar_one_or_none()
                     if video_clip:
                         clip_id = video_clip.id
+                        # Prefer persisted clip path/filename when legacy Event.clip_path is empty.
+                        if not clip_filename:
+                            clip_filename = video_clip.file_path or video_clip.filename
         except (ValueError, Exception) as e:
             logger.warning(f"DB lookup failed for event {event_id}: {e}")
         
@@ -2969,11 +2974,13 @@ async def extract_faces_from_event(event_id: str):
         
         # Try encrypted storage first
         encryption_svc = get_encryption_service()
-        event_files = encryption_svc.get_event_files(event_id)
-        
-        if event_files and event_files.get("clips"):
-            # Use first clip from encrypted storage
-            secure_clip_filename = event_files["clips"][0]
+        if not secure_clip_filename:
+            event_files = encryption_svc.get_event_files(event_id)
+            if event_files and event_files.get("clips"):
+                # Use first clip from encrypted storage
+                secure_clip_filename = event_files["clips"][0]
+
+        if secure_clip_filename:
             logger.info(f"Found encrypted clip for event {event_id}: {secure_clip_filename}")
             
             # Decrypt to temp file for face extraction
@@ -3293,10 +3300,48 @@ async def websocket_endpoint(websocket: WebSocket):
 # ============== Run ==============
 
 if __name__ == "__main__":
+    def _is_port_available(host: str, port: int) -> bool:
+        """Check if a TCP port can be bound on the target host."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+                return True
+            except OSError:
+                return False
+
+    def _find_available_port(host: str, preferred_port: int, max_attempts: int = 20) -> Optional[int]:
+        """Return preferred port if available, otherwise first free port in the scan range."""
+        if _is_port_available(host, preferred_port):
+            return preferred_port
+
+        for offset in range(1, max_attempts + 1):
+            candidate = preferred_port + offset
+            if _is_port_available(host, candidate):
+                return candidate
+
+        return None
+
+    host = settings.host
+    preferred_port = settings.port
+    selected_port = _find_available_port(host, preferred_port)
+
+    if selected_port is None:
+        logger.error(
+            f"No free port found in range {preferred_port}-{preferred_port + 20}. "
+            "Set PORT in .env to an available value."
+        )
+        raise SystemExit(1)
+
+    if selected_port != preferred_port:
+        logger.warning(
+            f"Port {preferred_port} is already in use. Starting RTSP service on port {selected_port} instead."
+        )
+
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8080,
+        host=host,
+        port=selected_port,
         reload=False,
-        log_level="info"
+        log_level=settings.log_level.lower()
     )

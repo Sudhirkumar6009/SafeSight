@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # Database - PostgreSQL for surveillance data
     # PostgreSQL: postgresql://user:password@localhost:5432/safesight
     database_url: str = Field(
-        default="postgresql://postgres:password@localhost:5432/violencesense",
+        default="postgresql+asyncpg://postgres:password@localhost:5432/violencesense",
         alias="DATABASE_URL"
     )
     
@@ -108,6 +108,15 @@ class Settings(BaseSettings):
     def temp_storage_path(self) -> Path:
         """Get the full path for temporary files."""
         return Path(self.storage_base_path) / "temp"
+
+    @property
+    def async_database_url(self) -> str:
+        """Return an async SQLAlchemy URL, upgrading legacy Postgres URLs when needed."""
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if self.database_url.startswith("postgres://"):
+            return self.database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        return self.database_url
     
     def ensure_directories(self):
         """
