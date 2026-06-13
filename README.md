@@ -16,7 +16,7 @@
 
 <br/><br/>
 
-> **AI-powered surveillance system built on a GPU-trained MobileNetV2-LSTM architecture, optimized for real-time CPU deployment — delivering 95%+ violence detection accuracy with confidence scoring.**
+> **AI-powered surveillance system built on a GPU-trained MobileNetV2-LSTM architecture, optimized for real-time CPU deployment — delivering 96%+ violence detection accuracy with confidence scoring.**
 
 <br/>
 
